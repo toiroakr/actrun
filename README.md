@@ -1,6 +1,6 @@
 # actrun
 
-> This repository is a soft fork of [mizchi/actrun](https://github.com/mizchi/actrun) and is published to npm as [`@toiroakr/actrun`](https://www.npmjs.com/package/@toiroakr/actrun) (`npx @toiroakr/actrun`, `npm install -D @toiroakr/actrun`). Versions follow `<upstream version>-fork.<n>`, e.g. `0.32.0-fork.1`. The fork-only features and how upstream releases are followed are described in [testdata/fork-features/README.md](testdata/fork-features/README.md).
+> This repository is a soft fork of [mizchi/actrun](https://github.com/mizchi/actrun) and is published to npm as [`@toiroakr/actrun`](https://www.npmjs.com/package/@toiroakr/actrun) (`npx @toiroakr/actrun`, `npm install -D @toiroakr/actrun`). Versions follow `<upstream version>-fork.<n>`, e.g. `0.32.0-fork.1`. Only the npm package is published from this fork; the curl, Docker and Nix commands below install upstream actrun. The fork-only features and how upstream releases are followed are described in [testdata/fork-features/README.md](testdata/fork-features/README.md).
 
 A local GitHub Actions runner built with [MoonBit](https://docs.moonbitlang.com). Run and debug GitHub Actions workflows locally with a `gh`-compatible CLI.
 
@@ -10,7 +10,7 @@ actrun keeps its release contract as close as possible to existing GitHub Action
 
 ```bash
 # npx (no install required)
-npx @mizchi/actrun workflow run .github/workflows/ci.yml
+npx @toiroakr/actrun workflow run .github/workflows/ci.yml
 
 # curl (Linux / macOS)
 curl -fsSL https://raw.githubusercontent.com/mizchi/actrun/main/install.sh | sh
@@ -19,7 +19,7 @@ curl -fsSL https://raw.githubusercontent.com/mizchi/actrun/main/install.sh | sh
 docker run --rm -v "$PWD":/workspace -w /workspace ghcr.io/mizchi/actrun workflow run .github/workflows/ci.yml
 
 # npm global install
-npm install -g @mizchi/actrun
+npm install -g @toiroakr/actrun
 
 # Nix (run without installing)
 nix run github:mizchi/actrun -- workflow run .github/workflows/ci.yml
