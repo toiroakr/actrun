@@ -252,29 +252,6 @@ fn action_registry_root() -> String {
 }
 
 ///|
-fn cached_repo_root_of_local_path(
-  workspace_root : String,
-  path : String,
-) -> String? {
-  let cache_root = normalize_local_action_path(github_action_cache_root())
-  let target = normalize_local_action_path(
-    absolute_lowering_path(join_path(workspace_root, path)),
-  )
-  guard target.has_prefix(cache_root + "/") else { None }
-  let segments = text_slice(target, cache_root.length() + 1, target.length()).split(
-    "/",
-  )
-  let parts = segments.map(part => part.to_owned()).collect()
-  if parts.length() < 3 {
-    None
-  } else {
-    Some(
-      join_path(join_path(join_path(cache_root, parts[0]), parts[1]), parts[2]),
-    )
-  }
-}
-
-///|
 priv struct GitHubActionCacheLayout {
   uses : String
   owner : String
@@ -1448,6 +1425,7 @@ fn expand_reusable_workflows_in_workspace(
   workspace_root : String,
   execution_root : String,
   errors : Array[String],
+  local_action_repo_roots? : Map[String, String] = Map([]),
 ) -> ReusableWorkflowExpansion {
   let expanded : Array[JobSpec] = []
   let aliases : Map[String, Array[String]] = Map([])
@@ -1600,6 +1578,7 @@ fn expand_reusable_workflows_in_workspace(
                         workspace_root,
                         execution_root,
                         errors,
+                        local_action_repo_roots~,
                       )
                       if errors.length() > before_errors {
                         break
@@ -1647,6 +1626,10 @@ fn expand_reusable_workflows_in_workspace(
                       source.source_root,
                       execution_root,
                     )
+                    if substituted_step.uses is Some(uses) &&
+                      parse_action_ref(uses).action is Some(LocalPath(_)) {
+                      local_action_repo_roots[uses] = source.source_root
+                    }
                     steps.push(substituted_step)
                   }
                   let actual_needs : Array[String] = []
@@ -1768,6 +1751,7 @@ fn expand_reusable_workflows_in_workspace(
                   source.source_root,
                   execution_root,
                   errors,
+                  local_action_repo_roots~,
                 )
                 if errors.length() > before_errors {
                   continue
@@ -2982,11 +2966,13 @@ pub fn lower_push_workflow_in_workspace(
   if workflow.workflow_call {
     errors.push("workflow_call is not supported in MVP")
   }
+  let local_action_repo_roots : Map[String, String] = Map([])
   let reusable_expansion = expand_reusable_workflows_in_workspace(
     workflow.jobs,
     workspace_root,
     workspace_root,
     errors,
+    local_action_repo_roots~,
   )
   let expanded_jobs = expand_matrix_jobs(
     reusable_expansion.jobs,
@@ -3130,9 +3116,9 @@ pub fn lower_push_workflow_in_workspace(
               composite_output_mappings~,
               composite_steps~,
               composite_parents~,
-              self_repository_root=cached_repo_root_of_local_path(
-                workspace_root, path,
-              ).unwrap_or("."),
+              self_repository_root=local_action_repo_roots
+                .get(path)
+                .unwrap_or("."),
             )
             step_index += 1
             continue

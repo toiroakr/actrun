@@ -3322,10 +3322,12 @@ async test "lowering: remote reusable workflow local action is resolved from cac
 
 ///|
 #cfg(target="native")
-async test "lowering: self-repository uses nested in a remote reusable workflow resolves from the cached repo" {
-  let workspace = prepare_local_action_workspace(
-    "reusable-workflow-remote-self-repository",
-  )
+async fn lower_remote_reusable_self_repository(
+  name : String,
+  repo : String,
+  ref_ : String,
+) -> String {
+  let workspace = prepare_local_action_workspace(name)
   let remote_repo = workspace + "/remote_repo"
   for
     dir in [
@@ -3380,8 +3382,10 @@ async test "lowering: self-repository uses nested in a remote reusable workflow 
     #|on: push
     #|jobs:
     #|  call:
-    #|    uses: demo/self-repo-tools/.github/workflows/reusable.yml@v1
-  let workflow = parse_workflow_yaml(caller_src).workflow.unwrap()
+    #|    uses: demo/REPO/.github/workflows/reusable.yml@REF
+  let workflow = parse_workflow_yaml(
+    caller_src.replace(old="REPO", new=repo).replace(old="REF", new=ref_),
+  ).workflow.unwrap()
   let log_path = workspace + "/git.log"
   test_support_remove_tree(
     "_build/actrun/github_actions/demo/self-repo-tools/v1",
@@ -3398,9 +3402,29 @@ async test "lowering: self-repository uses nested in a remote reusable workflow 
 
   @debug.debug_inspect(prefetch.errors, content="[]")
   @debug.debug_inspect(result.errors, content="[]")
-  let write = expect_task_plan(result.plan, "call__build/wrap__greet__write")
+  expect_task_plan(result.plan, "call__build/wrap__greet__write").script
+}
+
+///|
+#cfg(target="native")
+async test "lowering: self-repository uses nested in a remote reusable workflow resolves from the cached repo" {
   @debug.debug_inspect(
-    write.script,
+    lower_remote_reusable_self_repository(
+      "reusable-workflow-remote-self-repository", "self-repo-tools", "v1",
+    ),
+    content=(
+      #|"echo remote-greet"
+    ),
+  )
+}
+
+///|
+#cfg(target="native")
+async test "lowering: self-repository uses nested in a remote reusable workflow resolves when the ref contains a slash" {
+  @debug.debug_inspect(
+    lower_remote_reusable_self_repository(
+      "reusable-workflow-remote-self-repository-slash-ref", "slash-ref-tools", "release/v1",
+    ),
     content=(
       #|"echo remote-greet"
     ),
