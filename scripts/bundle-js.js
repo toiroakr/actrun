@@ -74,7 +74,7 @@ libInputs.hint = 'moon build --release src --target js';
 // point the WASM runners at the shim shipped next to it.
 const CLI_SHIM_PRELUDE = [
   "import { fileURLToPath as __actrunFileURLToPath } from 'node:url';",
-  "process.env.ACTRUN_WASI_RUNNER_SHIM ??= __actrunFileURLToPath(new URL('../scripts/wasi-runner.mjs', import.meta.url));",
+  "process.env.ACTRUN_WASI_RUNNER_SHIM ||= __actrunFileURLToPath(new URL('../scripts/wasi-runner.mjs', import.meta.url));",
   '',
 ].join('\n');
 
