@@ -6659,3 +6659,47 @@ async test "security: env values cannot inject shell commands" {
     ),
   )
 }
+
+///|
+#cfg(target="native")
+async fn format_condition_status(name : String, condition : String) -> String {
+  let workspace = prepare_workspace(name)
+  let workflow = new_workflow("ci", [
+    new_job(
+      "build",
+      [new_run_step("probe", "true", if_condition=condition)],
+      defaults=new_run_defaults(shell=Some("sh")),
+    ),
+  ])
+  let report = execute_lowered_native(
+    lower_push_workflow(workflow),
+    workspace_root=workspace,
+  )
+  expect_step_report(report, "build/probe").status
+}
+
+///|
+#cfg(target="native")
+async test "executor: format() in a condition turns doubled braces into literal braces" {
+  @debug.debug_inspect(
+    format_condition_status(
+      "executor-format-escaped-braces", "format('{{x}}-{0}', 'a') == '{x}-a'",
+    ),
+    content=(
+      #|"success"
+    ),
+  )
+}
+
+///|
+#cfg(target="native")
+async test "executor: format() in a condition does not expand placeholders inside an argument value" {
+  @debug.debug_inspect(
+    format_condition_status(
+      "executor-format-placeholder-in-value", "format('{0}-{1}', '{1}', 'b') == '{1}-b'",
+    ),
+    content=(
+      #|"success"
+    ),
+  )
+}
