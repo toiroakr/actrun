@@ -1,5 +1,7 @@
 # actrun
 
+> This repository is a soft fork of [mizchi/actrun](https://github.com/mizchi/actrun) and is published to npm as [`@toiroakr/actrun`](https://www.npmjs.com/package/@toiroakr/actrun) (`npx @toiroakr/actrun`, `npm install -D @toiroakr/actrun`). Versions follow `<upstream version>-fork.<n>`, e.g. `0.32.0-fork.1`. The fork-only features and how upstream releases are followed are described in [testdata/fork-features/README.md](testdata/fork-features/README.md).
+
 A local GitHub Actions runner built with [MoonBit](https://docs.moonbitlang.com). Run and debug GitHub Actions workflows locally with a `gh`-compatible CLI.
 
 actrun keeps its release contract as close as possible to existing GitHub Actions semantics. Workflow YAML and action metadata stay on a GitHub-compatible surface, while WASM support is treated as a self-hosted runner optimization. See [docs/public-api.md](docs/public-api.md) for the contract boundary and [ADR 0001](docs/adr/0001-public-api-boundary.md) for the rationale.

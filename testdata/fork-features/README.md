@@ -42,6 +42,21 @@ fork の CI（`ci.yml` の e2e ジョブ）では、fork 自身のビルドで�
    「upstream が対応済みで fork のコミットを外せる機能」「引き続き fork だけの機能」と、リリースを取り込んだときの衝突の見込みを PR にコメントする
 3. コメントを見てリリースを取り込み（対応済みの fork コミットは外す）、PR をマージする
 
+リリースを取り込むときは、次の 2 点もあわせて直す。
+
+- `package.json` の `version` が衝突したら `<upstream の版>-fork.0`（例: upstream が `0.33.0` なら `0.33.0-fork.0`）にする。この PR には changeset を足さない。マージするとその版がそのまま npm に公開される（下の「npm への公開」を参照）
+- `CHANGELOG.md` の先頭が衝突したら、upstream の新しい版の節と fork の節を両方残す（changesets は fork の節を upstream の節の上に書き足す）
+
+## npm への公開
+
+この fork は npm に [`@toiroakr/actrun`](https://www.npmjs.com/package/@toiroakr/actrun) として公開する。
+版は `<upstream の版>-fork.<n>`（例: `0.32.0-fork.1`）で、[changesets](https://github.com/changesets/changesets) の pre モード（`.changeset/pre.json` の tag が `fork`）で付ける。
+
+- fork の変更を入れる PR には `pnpm exec changeset` で changeset を足す（種類は patch でよい。pre モードでは patch / minor どちらでも `-fork.<n>` の `<n>` だけが 1 つ上がり、upstream の版の部分は変わらない）
+- main に changeset が入ると、`.github/workflows/release-fork.yml` が「chore: release」という PR を作る。この PR は `package.json` の版を上げて `CHANGELOG.md` に追記する
+- その PR をマージすると、`scripts/release_publish.sh` が npm に `latest` の dist-tag で公開し、`v<版>` の git タグと GitHub Release を作る。npm に同じ版があるときは何もしない
+- npm への認証は Trusted Publishing（GitHub Actions の OIDC）で行い、npm の token は使わない
+
 ## 機能を追加したとき
 
 fork に新しい機能を入れたら、ここに fixture を 1 つ足す。
