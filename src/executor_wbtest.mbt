@@ -419,3 +419,39 @@ async test "write_setup_node_shim: a bare node command is exec'd by absolute pat
   assert_true(exec_line.length() == 1 && exec_line[0].has_prefix("exec '/"))
   wbtest_cleanup(workspace)
 }
+
+///|
+async test "write_setup_node_shim: the PATH lookup skips entries that are not executable files" {
+  let workspace = wbtest_setup_tmpdir()
+  let _ = wbtest_run("mkdir", ["-p", workspace + "/dir-first/node"])
+  let _ = wbtest_run("mkdir", ["-p", workspace + "/plain-first"])
+  let _ = wbtest_run("touch", [workspace + "/plain-first/node"])
+  let _ = wbtest_run("mkdir", ["-p", workspace + "/real"])
+  let _ = wbtest_run("sh", [
+    "-c",
+    "printf '#!/bin/sh\\n' > " +
+    workspace +
+    "/real/node && chmod +x " +
+    workspace +
+    "/real/node",
+  ])
+  let original_path = @env.get_env_var("PATH").unwrap_or("")
+  @env.set_env_var(
+    "PATH",
+    workspace +
+    "/dir-first:" +
+    workspace +
+    "/plain-first:" +
+    workspace +
+    "/real:" +
+    original_path,
+  )
+  let shim_dir = write_setup_node_shim(
+    workspace, "build/setup", "node", "v20.0.0",
+  )
+  @env.set_env_var("PATH", original_path)
+  guard shim_dir is Some(dir) else { fail("shim was not written") }
+  let script = @xfs.read_file_to_string(dir + "/node")
+  assert_true(script.contains("exec '" + workspace + "/real/node'"))
+  wbtest_cleanup(workspace)
+}

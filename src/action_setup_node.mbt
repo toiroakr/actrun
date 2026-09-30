@@ -142,21 +142,21 @@ async fn exec_make_executable(path : String) -> Bool {
 }
 
 ///|
-fn resolve_command_on_path(command : String) -> String {
+async fn resolve_command_on_path(command : String) -> String {
   if command.contains("/") {
     return command
   }
-  let path = @env.get_env_var("PATH").unwrap_or("")
-  for dir in path.split(":") {
-    if dir.length() == 0 {
-      continue
-    }
-    let candidate = dir.to_string() + "/" + command
-    if @xfs.path_exists(candidate) {
-      return candidate
-    }
+  let (code, stdout, _) = run_command(
+    "sh",
+    ["-c", "command -v -- \"$1\"", "sh", command],
+    cwd=".",
+  )
+  let resolved = stdout.trim(chars=" \t\r\n").to_owned()
+  if code == 0 && resolved.has_prefix("/") {
+    resolved
+  } else {
+    command
   }
-  command
 }
 
 ///|
@@ -175,6 +175,7 @@ async fn write_setup_node_shim(
   }
   let shim_path = shim_dir + "/node"
   let d = "$"
+  let node_path = resolve_command_on_path(node_bin)
   let script = "#!/bin/sh\n" +
     "set -eu\n" +
     "if [ \"" +
@@ -188,7 +189,7 @@ async fn write_setup_node_shim(
     "  exit 0\n" +
     "fi\n" +
     "exec '" +
-    resolve_command_on_path(node_bin).replace_all(old="'", new="'\"'\"'") +
+    node_path.replace_all(old="'", new="'\"'\"'") +
     "' \"" +
     d +
     "@\"\n"
