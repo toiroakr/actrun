@@ -306,3 +306,28 @@ test "action ref: unresolved custom registry action is rejected" {
     content="[\"action 'bit://std/cache@v1' is not supported in MVP\"]",
   )
 }
+
+///|
+test "action ref: self-repository ref resolves to the repository-root local path" {
+  let action = expect_action(parse_action_ref("$/notify"))
+
+  guard action is LocalPath(path) else { abort("expected a local path") }
+  @debug.debug_inspect(
+    path,
+    content=(
+      #|"./notify"
+    ),
+  )
+}
+
+///|
+test "action ref: self-repository ref rejects an explicit version" {
+  let result = parse_action_ref("$/notify@v1")
+
+  @debug.debug_inspect(
+    result.errors,
+    content=(
+      #|["action ref '$/notify@v1' must not include @ref: $/ always resolves to the running commit"]
+    ),
+  )
+}

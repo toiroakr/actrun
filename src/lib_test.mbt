@@ -321,6 +321,64 @@ test "parser: parse step continue-on-error" {
 }
 
 ///|
+test "parser: self-repository step uses is normalized to a repository-root local path" {
+  let src =
+    #|name: ci
+    #|on: push
+    #|jobs:
+    #|  build:
+    #|    runs-on: ubuntu-latest
+    #|    steps:
+    #|      - uses: $/notify
+  let workflow = expect_workflow(parse_workflow_yaml(src))
+
+  @debug.debug_inspect(
+    workflow.jobs[0].steps[0].uses.unwrap_or(""),
+    content=(
+      #|"./notify"
+    ),
+  )
+}
+
+///|
+test "parser: self-repository reusable workflow uses is normalized to a repository-root local path" {
+  let src =
+    #|name: ci
+    #|on: push
+    #|jobs:
+    #|  call:
+    #|    uses: $/.github/workflows/reusable.yaml
+  let workflow = expect_workflow(parse_workflow_yaml(src))
+
+  @debug.debug_inspect(
+    workflow.jobs[0].reusable_workflow.unwrap_or(""),
+    content=(
+      #|"./.github/workflows/reusable.yaml"
+    ),
+  )
+}
+
+///|
+test "parser: self-repository uses with @ref is a parse error" {
+  let src =
+    #|name: ci
+    #|on: push
+    #|jobs:
+    #|  build:
+    #|    runs-on: ubuntu-latest
+    #|    steps:
+    #|      - uses: $/notify@v1
+  let parsed = parse_workflow_yaml(src)
+
+  @debug.debug_inspect(
+    parsed.errors,
+    content=(
+      #|["jobs.build.steps[0].uses '$/notify@v1' must not include @ref: $/ always resolves to the running commit"]
+    ),
+  )
+}
+
+///|
 test "parser: parse checkout uses step" {
   let src =
     #|name: ci
@@ -1452,6 +1510,50 @@ test "lowering: local composite action expands nested local action" {
     show_plan.action_scope.unwrap_or(""),
     content=(
       #|"test/setup"
+    ),
+  )
+}
+
+///|
+test "lowering: self-repository uses inside a local composite action resolves from the repository root" {
+  let workspace = prepare_local_action_workspace("lower-local-action-self-repo")
+  test_ensure_dir(workspace + "/shared")
+  test_ensure_dir(workspace + "/.github")
+  test_ensure_dir(workspace + "/.github/actions")
+  test_ensure_dir(workspace + "/.github/actions/setup")
+  let shared_src =
+    #|name: Shared
+    #|runs:
+    #|  using: composite
+    #|  steps:
+    #|    - id: write
+    #|      run: printf '%s' shared-ok > shared.txt
+    #|      shell: bash
+  @xfs.write_string_to_file(workspace + "/shared/action.yml", shared_src)
+  let action_src =
+    #|name: Setup
+    #|runs:
+    #|  using: composite
+    #|  steps:
+    #|    - id: child
+    #|      uses: $/shared
+  @xfs.write_string_to_file(
+    workspace + "/.github/actions/setup/action.yml",
+    action_src,
+  )
+
+  let workflow = new_workflow("ci", [
+    new_job("test", [new_uses_step("setup", "./.github/actions/setup")]),
+  ])
+
+  let result = lower_push_workflow_in_workspace(workflow, workspace)
+
+  @debug.debug_inspect(result.errors, content="[]")
+  let write_plan = expect_task_plan(result.plan, "test/setup__child__write")
+  @debug.debug_inspect(
+    write_plan.action_scope.unwrap_or(""),
+    content=(
+      #|"test/setup__child"
     ),
   )
 }

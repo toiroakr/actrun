@@ -282,12 +282,15 @@ async fn prefetch_action_uses(
   visited : Map[String, Bool],
   fetched : Array[String],
   errors : Array[String],
+  self_repository_root? : String = ".",
 ) -> Unit {
   let parsed = parse_action_ref(uses)
   guard parsed.action is Some(action_ref) else { return }
   match action_ref {
     LocalPath(path) => {
       let resolved_root = match current_action_root {
+        _ if is_self_repository_uses(uses) =>
+          normalize_local_action_path(join_path(self_repository_root, path))
         Some(root) => normalize_local_action_path(join_path(root, path))
         None => path
       }
@@ -313,6 +316,7 @@ async fn prefetch_action_uses(
             visited,
             fetched,
             errors,
+            self_repository_root~,
           )
         }
       }
@@ -355,6 +359,7 @@ async fn prefetch_action_uses(
                 visited,
                 fetched,
                 errors,
+                self_repository_root=layout.repo_root,
               )
             }
           }

@@ -115,6 +115,27 @@ fn action_parse_error(text : String, msg : String) -> ActionRefParseResult {
 }
 
 ///|
+const SelfRepositoryPrefix : String = "$/"
+
+///|
+const SelfRepositoryRefError : String = "must not include @ref: $/ always resolves to the running commit"
+
+///|
+fn is_self_repository_uses(uses : String) -> Bool {
+  uses.has_prefix(SelfRepositoryPrefix)
+}
+
+///|
+fn self_repository_local_path(uses : String) -> String? {
+  let path = substring(uses, SelfRepositoryPrefix.length(), uses.length())
+  if path.contains("@") {
+    None
+  } else {
+    Some("./" + path)
+  }
+}
+
+///|
 pub fn parse_action_ref(text : String) -> ActionRefParseResult {
   let uses = text.trim(chars=" ").to_owned()
   if uses.length() == 0 {
@@ -122,6 +143,12 @@ pub fn parse_action_ref(text : String) -> ActionRefParseResult {
   }
   if uses.has_prefix("./") || uses.has_prefix("../") {
     return { action: Some(LocalPath(uses)), errors: [], }
+  }
+  if uses.has_prefix(SelfRepositoryPrefix) {
+    return match self_repository_local_path(uses) {
+      Some(path) => { action: Some(LocalPath(path)), errors: [], }
+      None => action_parse_error(uses, SelfRepositoryRefError)
+    }
   }
   if uses.has_prefix("docker://") {
     let image = substring(uses, 9, uses.length())

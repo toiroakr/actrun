@@ -2162,6 +2162,10 @@ fn lower_manifest_backed_action(
       errors,
       action_context_env~,
       composite_output_mappings~,
+      self_repository_root=match github_action_cache_layout(action_ref) {
+        Some(layout) => layout.repo_root
+        None => cached_root
+      },
     )
   }
   if action_manifest.runtime.has_prefix("node") {
@@ -2486,6 +2490,7 @@ fn lower_local_action(
   errors : Array[String],
   action_context_env? : Map[String, String] = Map([]),
   composite_output_mappings? : Map[String, Map[String, String]] = Map([]),
+  self_repository_root? : String = ".",
 ) -> String {
   if workspace_root.length() == 0 {
     errors.push(
@@ -2597,8 +2602,13 @@ fn lower_local_action(
       }
       match action_ref {
         LocalPath(path) => {
+          let nested_base = if is_self_repository_uses(uses) {
+            self_repository_root
+          } else {
+            action_path_root
+          }
           let nested_action_path = normalize_local_action_path(
-            join_path(action_path_root, path),
+            join_path(nested_base, path),
           )
           local_previous_task_id = lower_local_action(
             workflow,
@@ -2615,6 +2625,7 @@ fn lower_local_action(
             errors,
             action_context_env~,
             composite_output_mappings~,
+            self_repository_root~,
           )
           inner_index += 1
           continue
