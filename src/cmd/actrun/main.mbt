@@ -5736,24 +5736,39 @@ fn collect_third_party_actions(
 ) -> Array[String] {
   let seen : Map[String, Bool] = Map([])
   let result : Array[String] = []
-  for job in workflow.jobs {
-    // Scan reusable workflow files
+  scan_jobs_for_third_party(workflow.jobs, workspace_root, seen, result)
+  result
+}
+
+///|
+fn scan_jobs_for_third_party(
+  jobs : Array[@ar.JobSpec],
+  workspace_root : String,
+  seen : Map[String, Bool],
+  result : Array[String],
+) -> Unit {
+  for job in jobs {
     match job.reusable_workflow {
       Some(path) if path.has_prefix("./") => {
-        let full = join_path(workspace_root, path)
-        let callee_text = try @xfs.read_file_to_string(full) catch {
-          _ => ""
-        } noraise {
-          v => v
-        }
-        if callee_text.length() > 0 {
-          let parsed = @ar.parse_workflow_yaml(callee_text)
-          match parsed.workflow {
-            Some(callee) =>
-              for cj in callee.jobs {
-                scan_steps_for_third_party(cj.steps, seen, result, "")
-              }
-            None => ()
+        let full = normalize_scan_path(join_path(workspace_root, path))
+        if !seen.contains("workflow:" + full) {
+          seen["workflow:" + full] = true
+          let callee_text = try @xfs.read_file_to_string(full) catch {
+            _ => ""
+          } noraise {
+            v => v
+          }
+          if callee_text.length() > 0 {
+            match @ar.parse_workflow_yaml(callee_text).workflow {
+              Some(callee) =>
+                scan_jobs_for_third_party(
+                  callee.jobs,
+                  workspace_root,
+                  seen,
+                  result,
+                )
+              None => ()
+            }
           }
         }
       }
@@ -5762,12 +5777,10 @@ fn collect_third_party_actions(
     for step in job.steps {
       match step.uses {
         Some(uses) => {
-          // Direct third-party check
           if !is_trusted_action_owner(uses) && !seen.contains(uses) {
             seen[uses] = true
             result.push(uses)
           }
-          // Scan local composite action internals
           if @ar.local_action_uses_path(uses) is Some(path) {
             scan_local_action_manifest(
               join_path(workspace_root, path),
@@ -5782,31 +5795,34 @@ fn collect_third_party_actions(
       }
     }
   }
-  result
 }
 
 ///|
-fn scan_steps_for_third_party(
-  steps : Array[@ar.StepSpec],
-  seen : Map[String, Bool],
-  result : Array[String],
-  via : String,
-) -> Unit {
-  for step in steps {
-    match step.uses {
-      Some(uses) =>
-        if !is_trusted_action_owner(uses) && !seen.contains(uses) {
-          seen[uses] = true
-          if via.length() > 0 {
-            result.push(uses + " (via " + via + ")")
-          } else {
-            result.push(uses)
-          }
-        }
-      None => ()
+fn normalize_scan_path(path : String) -> String {
+  let parts : Array[String] = []
+  for part_view in path.split("/") {
+    let part = part_view.to_owned()
+    if part.length() == 0 || part == "." {
+      continue
+    }
+    if part == ".." && parts.length() > 0 && parts[parts.length() - 1] != ".." {
+      ignore(parts.pop())
+    } else {
+      parts.push(part)
     }
   }
+  let joined = parts.join("/")
+  if path.has_prefix("/") {
+    "/" + joined
+  } else if joined.length() == 0 {
+    "."
+  } else {
+    joined
+  }
 }
+
+///|
+const MaxLocalActionScanDepth = 32
 
 ///|
 fn scan_local_action_manifest(
@@ -5815,8 +5831,10 @@ fn scan_local_action_manifest(
   seen : Map[String, Bool],
   result : Array[String],
   workspace_root? : String = ".",
+  depth? : Int = 0,
 ) -> Unit {
-  if seen.contains("dir:" + action_dir) {
+  let action_dir = normalize_scan_path(action_dir)
+  if depth > MaxLocalActionScanDepth || seen.contains("dir:" + action_dir) {
     return
   }
   seen["dir:" + action_dir] = true
@@ -5867,6 +5885,7 @@ fn scan_local_action_manifest(
           seen,
           result,
           workspace_root~,
+          depth=depth + 1,
         )
       }
     }

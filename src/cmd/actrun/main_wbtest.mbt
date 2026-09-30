@@ -5334,3 +5334,62 @@ async test "collect_third_party_actions: a relative action inside a composite is
     ),
   )
 }
+
+///|
+async test "collect_third_party_actions: a composite that uses itself is scanned once" {
+  let workspace = "_build/wbtest-third-party-self-loop"
+  ignore(run_command("rm", ["-rf", workspace], cwd="."))
+  ignore(
+    run_command(
+      "sh",
+      [
+        "-c", "mkdir -p \"$1/wrapper\" && printf 'runs:\\n  using: composite\\n  steps:\\n    - uses: ../wrapper\\n    - uses: third-party/action@v1\\n' > \"$1/wrapper/action.yml\"",
+        "sh", workspace,
+      ],
+      cwd=".",
+    ),
+  )
+  let workflow = @ar.new_workflow("ci", [
+    @ar.new_job("build", [@ar.new_uses_step("wrap", "$/wrapper")]),
+  ])
+  let found = collect_third_party_actions(workflow, workspace_root=workspace)
+  ignore(run_command("rm", ["-rf", workspace], cwd="."))
+  @debug.debug_inspect(
+    found,
+    content=(
+      #|["third-party/action@v1 (via $/wrapper)"]
+    ),
+  )
+}
+
+///|
+async test "collect_third_party_actions: composites used from local reusable workflows are scanned, following nested reusable calls" {
+  let workspace = "_build/wbtest-third-party-reusable"
+  ignore(run_command("rm", ["-rf", workspace], cwd="."))
+  ignore(
+    run_command(
+      "sh",
+      [
+        "-c", "mkdir -p \"$1/wrapper\" \"$1/.github/workflows\" && printf 'runs:\\n  using: composite\\n  steps:\\n    - uses: third-party/action@v1\\n' > \"$1/wrapper/action.yml\" && printf 'on: workflow_call\\njobs:\\n  outer:\\n    uses: ./.github/workflows/inner.yml\\n' > \"$1/.github/workflows/outer.yml\" && printf 'on: workflow_call\\njobs:\\n  loop:\\n    uses: ./.github/workflows/outer.yml\\n  inner:\\n    runs-on: ubuntu-latest\\n    steps:\\n      - uses: $/wrapper\\n' > \"$1/.github/workflows/inner.yml\"",
+        "sh", workspace,
+      ],
+      cwd=".",
+    ),
+  )
+  let workflow = @ar.parse_workflow_yaml(
+    (
+      #|on: push
+      #|jobs:
+      #|  call:
+      #|    uses: ./.github/workflows/outer.yml
+    ),
+  ).workflow.unwrap()
+  let found = collect_third_party_actions(workflow, workspace_root=workspace)
+  ignore(run_command("rm", ["-rf", workspace], cwd="."))
+  @debug.debug_inspect(
+    found,
+    content=(
+      #|["third-party/action@v1 (via $/wrapper)"]
+    ),
+  )
+}
