@@ -199,3 +199,12 @@ test "S006: self-repository uses with an @ref is invalid" {
   let s006 = diags.filter(fn(d) { d.code == "invalid-uses" })
   @debug.debug_inspect(s006.length(), content="1")
 }
+
+///|
+test "S006: a parent-relative uses is not a valid workflow step format" {
+  let job = @ar.new_job("build", [@ar.new_uses_step("s1", "../outside")])
+  let workflow = @ar.new_workflow("test", [job])
+  let diags = check_semantics(workflow)
+  let s006 = diags.filter(fn(d) { d.code == "invalid-uses" })
+  @debug.debug_inspect(s006.length(), content="1")
+}

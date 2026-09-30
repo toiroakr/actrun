@@ -145,6 +145,12 @@ pub fn is_local_action_uses(uses : String) -> Bool {
 }
 
 ///|
+pub fn is_repository_local_uses(uses : String) -> Bool {
+  uses.has_prefix("./") ||
+  (is_self_repository_uses(uses) && self_repository_local_path(uses) is Ok(_))
+}
+
+///|
 pub fn local_action_uses_path(uses : String) -> String? {
   if uses.has_prefix("./") || uses.has_prefix("../") {
     Some(uses)

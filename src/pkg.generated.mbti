@@ -51,6 +51,8 @@ pub fn inspect_wasm_module(Bytes) -> WasmModuleInfo
 
 pub fn is_local_action_uses(String) -> Bool
 
+pub fn is_repository_local_uses(String) -> Bool
+
 pub fn local_action_uses_path(String) -> String?
 
 pub fn lower_push_workflow(WorkflowSpec) -> LoweringResult
