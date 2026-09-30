@@ -510,3 +510,30 @@ async test "resolve_command_on_path: a relative path to an executable is returne
     !resolved.contains("/./"),
   )
 }
+
+///|
+test "step_conclusion_visible: a failure inside one composite is hidden from a sibling composite that shares its id prefix" {
+  let parents : Map[String, String] = {
+    "setup__child": "setup",
+    "setup__post__child": "setup__post",
+  }
+  let scope = StepScope::{
+    step_id: "setup__post__child",
+    parent_of: fn(id) { parents.get(id) },
+  }
+  assert_false(step_conclusion_visible("setup__child", Some(scope)))
+}
+
+///|
+test "step_conclusion_visible: a failure inside an enclosing composite is visible to its nested steps" {
+  let parents : Map[String, String] = {
+    "setup__child": "setup",
+    "setup__nested__leaf": "setup__nested",
+    "setup__nested": "setup",
+  }
+  let scope = StepScope::{
+    step_id: "setup__nested__leaf",
+    parent_of: fn(id) { parents.get(id) },
+  }
+  assert_true(step_conclusion_visible("setup__child", Some(scope)))
+}

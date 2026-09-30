@@ -2220,7 +2220,10 @@ fn composite_ancestor_step_ids(
 fn step_conclusion_visible(key : String, scope : StepScope?) -> Bool {
   guard scope is Some(scope) else { return true }
   match (scope.parent_of)(key) {
-    Some(parent) => scope.step_id.has_prefix(parent + "__")
+    Some(parent) =>
+      composite_ancestor_step_ids(scope.step_id, scope.parent_of).contains(
+        parent,
+      )
     None => true
   }
 }
