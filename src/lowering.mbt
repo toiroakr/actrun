@@ -441,6 +441,18 @@ fn is_context_ref_continuation(expression : String, pos : Int) -> Bool {
 }
 
 ///|
+fn is_inside_expr_string_literal(expression : String, pos : Int) -> Bool {
+  let quote = '\''.to_int().to_uint16()
+  let mut quotes = 0
+  for idx in 0..<pos {
+    if expression.unsafe_get(idx) == quote {
+      quotes += 1
+    }
+  }
+  quotes % 2 == 1
+}
+
+///|
 fn substitute_context_refs_in_expr(
   expression : String,
   prefix : String,
@@ -450,7 +462,8 @@ fn substitute_context_refs_in_expr(
   let mut idx = 0
   while idx < expression.length() {
     match find_substring(expression, prefix, idx) {
-      Some(pos) if pos > 0 && is_context_ref_continuation(expression, pos - 1) => {
+      Some(pos) if (pos > 0 && is_context_ref_continuation(expression, pos - 1)) ||
+        is_inside_expr_string_literal(expression, pos) => {
         chunks.push(text_slice(expression, idx, pos + prefix.length()))
         idx = pos + prefix.length()
       }

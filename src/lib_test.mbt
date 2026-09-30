@@ -399,6 +399,20 @@ test "parser: self-repository uses with an empty path is a parse error" {
 }
 
 ///|
+test "lowering: inputs refs inside string literals in a composite action step if are left untouched" {
+  let plan = lower_composite_step_if(
+    "lower-local-action-if-inputs-literal", "inputs.provider == 'inputs.provider'",
+  )
+
+  @debug.debug_inspect(
+    plan.if_condition,
+    content=(
+      #|"'slack' == 'inputs.provider'"
+    ),
+  )
+}
+
+///|
 test "parser: parse checkout uses step" {
   let src =
     #|name: ci
