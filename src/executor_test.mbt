@@ -3816,6 +3816,27 @@ async test "executor: an inner failure in a composite step without continue-on-e
 }
 
 ///|
+#cfg(target="native")
+async test "executor: continue-on-error on a composite step is evaluated once, not re-evaluated after each inner step" {
+  let report = run_failing_composite(
+    "executor-composite-coe-evaluated-once",
+    failing_composite_src.replace(
+      old="    - id: after\n",
+      new="    - id: after\n      if: always()\n",
+    ),
+    "${{ !failure() }}",
+  )
+
+  @debug.debug_inspect(report.ok, content="true")
+  @debug.debug_inspect(
+    expect_task_report(report, "build/verify").stdout,
+    content=(
+      #|"failure|success"
+    ),
+  )
+}
+
+///|
 let wrapping_composite_src : String =
   #|name: Wrap
   #|runs:

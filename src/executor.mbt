@@ -4259,6 +4259,7 @@ pub async fn execute_lowered_native(
   let started_job_services : Map[String, Array[StartedJobService]] = Map([])
   let remaining_job_tasks : Map[String, Int] = Map([])
   let mut required_failed = false
+  let composite_continue_on_error_values : Map[String, Bool] = Map([])
 
   for task in selected_tasks {
     match find_task_plan(lowered.plan, task.id) {
@@ -4673,14 +4674,18 @@ pub async fn execute_lowered_native(
                   condition_context,
                 )
               let composite_absorbs_failure = fn(outer_step_id : String) {
-                match
-                  lowered.plan.composite_continue_on_error.get(
-                    plan.job_id + "/" + outer_step_id,
-                  ) {
+                let key = plan.job_id + "/" + outer_step_id
+                if composite_continue_on_error_values.get(key) is Some(value) {
+                  return value
+                }
+                let value = match
+                  lowered.plan.composite_continue_on_error.get(key) {
                   Some(expr) =>
                     evaluate_boolean_condition(expr, condition_context)
                   None => false
                 }
+                composite_continue_on_error_values[key] = value
+                value
               }
               let outcome = task_outcome(report)
               let conclusion = task_conclusion(outcome, continue_on_error)
