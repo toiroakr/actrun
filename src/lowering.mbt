@@ -441,6 +441,19 @@ fn is_context_ref_continuation(expression : String, pos : Int) -> Bool {
 }
 
 ///|
+fn whole_expression_body(value : String) -> String? {
+  let trimmed = value.trim(chars=" \t\r\n").to_owned()
+  let open = "$\u{7b}\u{7b}"
+  guard trimmed.has_prefix(open) && trimmed.has_suffix("}}") else { None }
+  let body = text_slice(trimmed, open.length(), trimmed.length() - 2)
+  if body.contains(open) || body.contains("}}") {
+    None
+  } else {
+    Some(body.trim(chars=" \t\r\n").to_owned())
+  }
+}
+
+///|
 fn is_inside_expr_string_literal(expression : String, pos : Int) -> Bool {
   let quote = '\''.to_int().to_uint16()
   let mut quotes = 0
@@ -457,6 +470,7 @@ fn substitute_context_refs_in_expr(
   expression : String,
   prefix : String,
   values : Map[String, String],
+  expand_expression_values? : Bool = false,
 ) -> String {
   let chunks : Array[String] = []
   let mut idx = 0
@@ -478,10 +492,16 @@ fn substitute_context_refs_in_expr(
         if key_end > key_start {
           let key = text_slice(expression, key_start, key_end)
           let value = values.get(key).unwrap_or("")
-          // Quote the value as a string literal to prevent expression injection.
-          // e.g., matrix value "'true' || always()" becomes the safe literal
-          // "'\'true\' || always()'" instead of raw injection into the expression.
-          chunks.push(quote_expr_string_literal(value))
+          match whole_expression_body(value) {
+            Some(body) if expand_expression_values =>
+              chunks.push("(" + body + ")")
+            _ if expand_expression_values && value.contains("$\u{7b}\u{7b}") =>
+              chunks.push(text_slice(expression, pos, key_end))
+            // Quote the value as a string literal to prevent expression injection.
+            // e.g., matrix value "'true' || always()" becomes the safe literal
+            // "'\'true\' || always()'" instead of raw injection into the expression.
+            _ => chunks.push(quote_expr_string_literal(value))
+          }
           idx = key_end
         } else {
           chunks.push(prefix)
@@ -2602,6 +2622,7 @@ fn lower_local_action(
       inner_step.if_condition,
       "inputs.",
       resolved_inputs,
+      expand_expression_values=true,
     )
     validate_step_if(job.id, resolved_step_id, inner_if_condition, errors)
     validate_continue_on_error(

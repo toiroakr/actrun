@@ -1596,6 +1596,7 @@ test "lowering: self-repository uses inside a local composite action resolves fr
 fn lower_composite_step_if(
   name : String,
   if_condition : String,
+  with_values? : Map[String, String] = Map([]),
 ) -> TaskPlan raise {
   let workspace = prepare_local_action_workspace(name)
   test_ensure_dir(workspace + "/notify")
@@ -1616,7 +1617,7 @@ fn lower_composite_step_if(
     action_src.replace(old="IF_CONDITION", new=if_condition),
   )
   let workflow = new_workflow("ci", [
-    new_job("test", [new_uses_step("notify", "./notify")]),
+    new_job("test", [new_uses_step("notify", "./notify", with_values~)]),
   ])
   let result = lower_push_workflow_in_workspace(workflow, workspace)
   @debug.debug_inspect(result.errors, content="[]")
@@ -1633,6 +1634,22 @@ test "lowering: inputs refs in a composite action step if are substituted with t
     plan.if_condition,
     content=(
       #|"'slack' == 'slack'"
+    ),
+  )
+}
+
+///|
+test "lowering: an input given as an expression is expanded as that expression in a composite action step if" {
+  let plan = lower_composite_step_if(
+    "lower-local-action-if-inputs-expression",
+    "inputs.provider == 'slack'",
+    with_values={ "provider": "${{ steps.detect.outputs.provider }}" },
+  )
+
+  @debug.debug_inspect(
+    plan.if_condition,
+    content=(
+      #|"(steps.detect.outputs.provider) == 'slack'"
     ),
   )
 }
