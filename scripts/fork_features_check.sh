@@ -12,6 +12,16 @@ if [ "$#" -eq 0 ]; then
   exit 2
 fi
 
+command_args=()
+for arg in "$@"; do
+  case "$arg" in
+    /*) command_args+=("$arg") ;;
+    */*) command_args+=("$PWD/$arg") ;;
+    *) command_args+=("$arg") ;;
+  esac
+done
+set -- "${command_args[@]}"
+
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FEATURES_DIR="$REPO_ROOT/testdata/fork-features"
 TIMEOUT_SECONDS="${FORK_FEATURES_TIMEOUT:-120}"
