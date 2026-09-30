@@ -638,6 +638,7 @@ pub struct ExecutionPlan {
   job_services : Map[String, Map[String, JobContainerSpec]]
   composite_output_mappings : Map[String, Map[String, String]]
   composite_steps : Map[String, CompositeStepPlan]
+  composite_parents : Map[String, String]
 }
 
 ///|

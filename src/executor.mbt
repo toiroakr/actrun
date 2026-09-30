@@ -285,13 +285,12 @@ fn apply_composite_output_mappings(
   step_id : String,
   mappings : Map[String, Map[String, String]],
   absorbs_failure? : (String) -> Bool = _ => false,
-  is_composite? : (String) -> Bool = _ => false,
+  parent_of? : (String) -> String? = _ => None,
 ) -> JobRuntimeState {
-  let ancestors = composite_ancestor_step_ids(step_id, is_composite)
+  let ancestors = composite_ancestor_step_ids(step_id, parent_of)
   if ancestors.length() == 0 {
     return state
   }
-  let outer_step_id = ancestors[0]
   let updated_outcomes : Map[String, String] = Map([])
   for key, value in state.step_outcomes {
     updated_outcomes[key] = value
@@ -299,6 +298,10 @@ fn apply_composite_output_mappings(
   let updated_conclusions : Map[String, String] = Map([])
   for key, value in state.step_conclusions {
     updated_conclusions[key] = value
+  }
+  let updated_outputs : Map[String, Map[String, String]] = Map([])
+  for key, value in state.step_outputs {
+    updated_outputs[key] = value
   }
   let mut child = step_id
   for parent in ancestors {
@@ -314,17 +317,9 @@ fn apply_composite_output_mappings(
         parent_outcome
       }
     }
-    child = parent
-  }
-  // Resolve composite output mappings if this outer step has them
-  let updated_outputs : Map[String, Map[String, String]] = Map([])
-  for key, value in state.step_outputs {
-    updated_outputs[key] = value
-  }
-  match mappings.get(outer_step_id) {
-    Some(output_map) => {
-      let outer_outputs : Map[String, String] = state.step_outputs
-        .get(outer_step_id)
+    if mappings.get(parent) is Some(output_map) {
+      let outer_outputs : Map[String, String] = updated_outputs
+        .get(parent)
         .unwrap_or({})
       for output_name, encoded in output_map {
         // encoded format: "outer__inner:key"
@@ -335,20 +330,16 @@ fn apply_composite_output_mappings(
           colon_idx + 1,
           encoded.length(),
         )
-        match state.step_outputs.get(source_step) {
-          Some(source_outputs) =>
-            match source_outputs.get(source_key) {
-              Some(value) => outer_outputs[output_name] = value
-              None => ()
-            }
-          None => ()
+        if updated_outputs.get(source_step) is Some(source_outputs) &&
+          source_outputs.get(source_key) is Some(value) {
+          outer_outputs[output_name] = value
         }
       }
       if outer_outputs.length() > 0 {
-        updated_outputs[outer_step_id] = outer_outputs
+        updated_outputs[parent] = outer_outputs
       }
     }
-    None => ()
+    child = parent
   }
   {
     env_updates: state.env_updates,
@@ -2199,7 +2190,7 @@ fn job_if_cancelled_value(needs_results : Map[String, String]) -> Bool {
 ///|
 priv struct StepScope {
   step_id : String
-  is_composite : (String) -> Bool
+  parent_of : (String) -> String?
 }
 
 ///|
@@ -2207,37 +2198,18 @@ fn plan_step_scope(plan : ExecutionPlan, task : TaskPlan) -> StepScope {
   let job_prefix = task.job_id + "/"
   {
     step_id: task.step_id,
-    is_composite: step_id => plan.composite_steps.contains(job_prefix + step_id),
+    parent_of: step_id => plan.composite_parents.get(job_prefix + step_id),
   }
-}
-
-///|
-fn composite_parent_step_id(
-  step_id : String,
-  is_composite : (String) -> Bool,
-) -> String? {
-  let mut idx = step_id.length() - 1
-  while idx > 1 {
-    if step_id.unsafe_get(idx - 1) == '_'.to_int().to_uint16() &&
-      step_id.unsafe_get(idx) == '_'.to_int().to_uint16() {
-      let prefix = exec_text_slice(step_id, 0, idx - 1)
-      if is_composite(prefix) {
-        return Some(prefix)
-      }
-    }
-    idx -= 1
-  }
-  None
 }
 
 ///|
 fn composite_ancestor_step_ids(
   step_id : String,
-  is_composite : (String) -> Bool,
+  parent_of : (String) -> String?,
 ) -> Array[String] {
   let ancestors : Array[String] = []
   let mut current = step_id
-  while composite_parent_step_id(current, is_composite) is Some(parent) {
+  while parent_of(current) is Some(parent) {
     ancestors.push(parent)
     current = parent
   }
@@ -2247,10 +2219,7 @@ fn composite_ancestor_step_ids(
 ///|
 fn step_conclusion_visible(key : String, scope : StepScope?) -> Bool {
   guard scope is Some(scope) else { return true }
-  if key.has_suffix("__post") {
-    return true
-  }
-  match composite_parent_step_id(key, scope.is_composite) {
+  match (scope.parent_of)(key) {
     Some(parent) => scope.step_id.has_prefix(parent + "__")
     None => true
   }
@@ -4460,7 +4429,7 @@ pub async fn execute_lowered_native(
             for
               outer_step_id in composite_ancestor_step_ids(
                 plan.step_id,
-                step_scope.is_composite,
+                step_scope.parent_of,
               ) {
               let key = plan.job_id + "/" + outer_step_id
               guard lowered.plan.composite_steps.get(key) is Some(composite) &&
@@ -4769,7 +4738,7 @@ pub async fn execute_lowered_native(
                 plan.step_id,
                 lowered.plan.composite_output_mappings,
                 absorbs_failure=composite_absorbs_failure,
-                is_composite=step_scope.is_composite,
+                parent_of=step_scope.parent_of,
               )
               job_states[plan.job_id] = next_state
               if conclusion == "success" {
@@ -4856,7 +4825,7 @@ pub async fn execute_lowered_native(
                 })
                 let absorbed = composite_ancestor_step_ids(
                   plan.step_id,
-                  step_scope.is_composite,
+                  step_scope.parent_of,
                 ).any(composite_absorbs_failure)
                 success[task.id] = absorbed ||
                   task_conclusion_allows_dependents(conclusion)

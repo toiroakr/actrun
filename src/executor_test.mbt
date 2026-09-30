@@ -3910,6 +3910,110 @@ async test "executor: continue-on-error on a composite step is evaluated in the 
 }
 
 ///|
+#cfg(target="native")
+async test "executor: an inner step is attributed to its real composite even when another composite id is its prefix" {
+  let workspace = prepare_workspace("executor-composite-id-collision")
+  ensure_dir(workspace + "/a")
+  ensure_dir(workspace + "/b")
+  @xfs.write_string_to_file(
+    workspace + "/a/action.yml",
+    (
+      #|name: A
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - id: test__run
+      #|      run: exit 1
+      #|      shell: sh
+    ),
+  )
+  @xfs.write_string_to_file(
+    workspace + "/b/action.yml",
+    (
+      #|name: B
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - id: ok
+      #|      run: echo ok
+      #|      shell: sh
+    ),
+  )
+  let workflow = new_workflow("ci", [
+    new_job(
+      "build",
+      [
+        new_uses_step("build", "./a"),
+        new_uses_step("build__test", "./b", continue_on_error="true"),
+      ],
+      defaults=new_run_defaults(shell=Some("sh")),
+    ),
+  ])
+  let lowered = lower_push_workflow_in_workspace(workflow, workspace)
+  let report = execute_lowered_native(lowered, workspace_root=workspace)
+
+  @debug.debug_inspect(report.ok, content="false")
+}
+
+///|
+#cfg(target="native")
+async test "executor: a composite output that forwards a nested composite output is set when the nested composite is the last step" {
+  let workspace = prepare_workspace("executor-composite-nested-output")
+  ensure_dir(workspace + "/setup")
+  ensure_dir(workspace + "/setup/nested")
+  @xfs.write_string_to_file(
+    workspace + "/setup/action.yml",
+    (
+      #|name: Setup
+      #|outputs:
+      #|  value:
+      #|    value: ${{ steps.nested.outputs.value }}
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - id: nested
+      #|      uses: ./nested
+    ),
+  )
+  @xfs.write_string_to_file(
+    workspace + "/setup/nested/action.yml",
+    (
+      #|name: Nested
+      #|outputs:
+      #|  value:
+      #|    value: ${{ steps.emit.outputs.value }}
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - id: emit
+      #|      run: echo "value=from-nested" >> "$GITHUB_OUTPUT"
+      #|      shell: sh
+    ),
+  )
+  let workflow = new_workflow("ci", [
+    new_job(
+      "build",
+      [
+        new_uses_step("setup", "./setup"),
+        new_run_step(
+          "verify", "printf '%s' \"${{ steps.setup.outputs.value }}\"",
+        ),
+      ],
+      defaults=new_run_defaults(shell=Some("sh")),
+    ),
+  ])
+  let lowered = lower_push_workflow_in_workspace(workflow, workspace)
+  let report = execute_lowered_native(lowered, workspace_root=workspace)
+
+  @debug.debug_inspect(
+    expect_task_report(report, "build/verify").stdout,
+    content=(
+      #|"from-nested"
+    ),
+  )
+}
+
+///|
 let wrapping_composite_src : String =
   #|name: Wrap
   #|runs:

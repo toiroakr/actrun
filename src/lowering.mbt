@@ -2202,6 +2202,7 @@ fn lower_manifest_backed_action(
   errors : Array[String],
   composite_output_mappings? : Map[String, Map[String, String]] = Map([]),
   composite_steps? : Map[String, CompositeStepPlan] = Map([]),
+  composite_parents? : Map[String, String] = Map([]),
 ) -> String {
   guard find_local_action_manifest(workspace_root, cached_root)
     is Some((_, manifest_text)) else {
@@ -2238,6 +2239,7 @@ fn lower_manifest_backed_action(
       action_context_env~,
       composite_output_mappings~,
       composite_steps~,
+      composite_parents~,
       self_repository_root=match github_action_cache_layout(action_ref) {
         Some(layout) => layout.repo_root
         None => cached_root
@@ -2567,6 +2569,7 @@ fn lower_local_action(
   action_context_env? : Map[String, String] = Map([]),
   composite_output_mappings? : Map[String, Map[String, String]] = Map([]),
   composite_steps? : Map[String, CompositeStepPlan] = Map([]),
+  composite_parents? : Map[String, String] = Map([]),
   self_repository_root? : String = ".",
 ) -> String {
   if workspace_root.length() == 0 {
@@ -2616,6 +2619,7 @@ fn lower_local_action(
       errors,
       composite_output_mappings~,
       composite_steps~,
+      composite_parents~,
     )
   }
   composite_steps[job.id + "/" + outer_step_id] = {
@@ -2641,6 +2645,7 @@ fn lower_local_action(
     let inner_step = action.steps[inner_index]
     let inner_step_id = default_step_id(inner_step, inner_index)
     let resolved_step_id = composite_step_id(outer_step_id, inner_step_id)
+    composite_parents[job.id + "/" + resolved_step_id] = outer_step_id
     let inner_if_condition = substitute_context_refs_in_expr(
       inner_step.if_condition,
       "inputs.",
@@ -2714,6 +2719,7 @@ fn lower_local_action(
             action_context_env~,
             composite_output_mappings~,
             composite_steps~,
+            composite_parents~,
             self_repository_root~,
           )
           inner_index += 1
@@ -2778,6 +2784,7 @@ fn lower_local_action(
           errors,
           composite_output_mappings~,
           composite_steps~,
+          composite_parents~,
         )
         inner_index += 1
         continue
@@ -2969,6 +2976,7 @@ pub fn lower_push_workflow_in_workspace(
   let job_services : Map[String, Map[String, JobContainerSpec]] = Map([])
   let composite_output_mappings : Map[String, Map[String, String]] = Map([])
   let composite_steps : Map[String, CompositeStepPlan] = Map([])
+  let composite_parents : Map[String, String] = Map([])
   let entry_targets : Array[String] = []
   let seen_jobs : Map[String, Bool] = Map([])
   if workflow.workflow_call {
@@ -3121,6 +3129,7 @@ pub fn lower_push_workflow_in_workspace(
               errors,
               composite_output_mappings~,
               composite_steps~,
+              composite_parents~,
               self_repository_root=cached_repo_root_of_local_path(
                 workspace_root, path,
               ).unwrap_or("."),
@@ -3170,6 +3179,7 @@ pub fn lower_push_workflow_in_workspace(
             errors,
             composite_output_mappings~,
             composite_steps~,
+            composite_parents~,
           )
           step_index += 1
           continue
@@ -3268,6 +3278,7 @@ pub fn lower_push_workflow_in_workspace(
       job_services,
       composite_output_mappings,
       composite_steps,
+      composite_parents,
     },
     errors,
   }
