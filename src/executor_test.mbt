@@ -4076,6 +4076,63 @@ async test "executor: a workspace-relative action still runs from the current wo
 }
 
 ///|
+#cfg(target="native")
+async test "executor: continue-on-error on a composite step absorbs a failing pre script of a nested node action" {
+  let workspace = prepare_workspace("executor-composite-coe-node-pre")
+  let node_bin = test_support_prepare_fake_node_bin(
+    workspace,
+    workspace + "/node.log",
+  )
+  ensure_dir(workspace + "/wrap")
+  ensure_dir(workspace + "/wrap/node")
+  @xfs.write_string_to_file(
+    workspace + "/wrap/action.yml",
+    (
+      #|name: Wrap
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - id: node
+      #|      uses: ./node
+    ),
+  )
+  @xfs.write_string_to_file(
+    workspace + "/wrap/node/action.yml",
+    (
+      #|name: Node
+      #|runs:
+      #|  using: node20
+      #|  pre: pre.js
+      #|  main: main.js
+    ),
+  )
+  @xfs.write_string_to_file(workspace + "/wrap/node/pre.js", "exit 1\n")
+  @xfs.write_string_to_file(workspace + "/wrap/node/main.js", "echo main\n")
+  let workflow = new_workflow("ci", [
+    new_job(
+      "build",
+      [
+        new_uses_step("wrap", "./wrap", continue_on_error="true"),
+        new_run_step("verify", "echo verified"),
+      ],
+      env={ "ACTRUN_NODE_BIN": node_bin },
+      defaults=new_run_defaults(shell=Some("sh")),
+    ),
+  ])
+  let lowered = lower_push_workflow_in_workspace(workflow, workspace)
+  @debug.debug_inspect(lowered.errors, content="[]")
+  let report = execute_lowered_native(lowered, workspace_root=workspace)
+
+  @debug.debug_inspect(report.ok, content="true")
+  @debug.debug_inspect(
+    expect_task_report(report, "build/verify").status,
+    content=(
+      #|"success"
+    ),
+  )
+}
+
+///|
 let wrapping_composite_src : String =
   #|name: Wrap
   #|runs:

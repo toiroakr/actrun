@@ -2635,7 +2635,14 @@ fn lower_local_action(
     let inner_step = action.steps[inner_index]
     let inner_step_id = default_step_id(inner_step, inner_index)
     let resolved_step_id = composite_step_id(outer_step_id, inner_step_id)
-    composite_parents[job.id + "/" + resolved_step_id] = outer_step_id
+    for
+      step_id in [
+        resolved_step_id,
+        lifecycle_step_id(resolved_step_id, "pre"),
+        lifecycle_step_id(resolved_step_id, "post"),
+      ] {
+      composite_parents[job.id + "/" + step_id] = outer_step_id
+    }
     let inner_if_condition = substitute_context_refs_in_expr(
       inner_step.if_condition,
       "inputs.",
