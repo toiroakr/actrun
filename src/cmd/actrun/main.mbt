@@ -3254,7 +3254,6 @@ async fn handle_clean_command(args : Array[String]) -> Int {
     "actions": actrun_root + "/github_actions",
     "artifacts": actrun_root + "/artifacts",
     "checkouts": actrun_root + "/checkouts",
-    "self-repository": actrun_root + "/self_repository",
   }
   if target == "all" {
     ignore(run_command("git", ["worktree", "prune"], cwd="."))
@@ -5848,12 +5847,11 @@ fn scan_local_action_manifest(
 
 ///|
 async fn create_self_repository_snapshot(execution_root : String) -> String? {
-  let snapshot = "_build/actrun/self_repository/snap-" + @env.now().to_string()
   let (code, stdout, _) = run_command(
     "bash",
     [
-      "-c", "set -euo pipefail; mkdir -p \"$2\"; (cd \"$1\" && find . -mindepth 1 -maxdepth 1 ! -name _build ! -name .git | tar -cf - -T -) | tar -C \"$2\" -xf -; cd \"$2\" && pwd",
-      "bash", execution_root, snapshot,
+      "-c", "set -euo pipefail; snap=$(mktemp -d \"${TMPDIR:-/tmp}/actrun-self-repository.XXXXXX\"); trap 'rm -rf \"$snap\"' ERR; (cd \"$1\" && find . -mindepth 1 -maxdepth 1 ! -name _build ! -name .git | tar -cf - -T -) | tar -C \"$snap\" -xf -; cd \"$snap\" && pwd",
+      "bash", execution_root,
     ],
     cwd=".",
   )

@@ -5250,3 +5250,31 @@ test "collect_third_party_actions: a self-repository action is not third-party" 
   ])
   @debug.debug_inspect(collect_third_party_actions(workflow), content="[]")
 }
+
+///|
+async test "create_self_repository_snapshot: each run gets its own snapshot outside the workspace" {
+  let workspace = "_build/wbtest-self-repository-workspace"
+  ignore(run_command("rm", ["-rf", workspace], cwd="."))
+  ignore(run_command("mkdir", ["-p", workspace + "/greet"], cwd="."))
+  @xfs.write_string_to_file(workspace + "/greet/action.yml", "name: Greet\n")
+  let first = create_self_repository_snapshot(workspace)
+  let second = create_self_repository_snapshot(workspace)
+  let (_, workspace_abs, _) = run_command(
+    "sh",
+    ["-c", "cd \"$1\" && pwd", "sh", workspace],
+    cwd=".",
+  )
+  let workspace_abs = workspace_abs.trim(chars=" \t\r\n").to_owned()
+  guard first is Some(first) && second is Some(second) else {
+    fail("snapshot was not created")
+  }
+  assert_true(first != second)
+  assert_true(
+    !first.has_prefix(workspace_abs) &&
+    !first.has_prefix(@env.current_dir().unwrap_or("") + "/_build"),
+  )
+  assert_true(@xfs.path_exists(first + "/greet/action.yml"))
+  remove_self_repository_snapshot(first)
+  remove_self_repository_snapshot(second)
+  ignore(run_command("rm", ["-rf", workspace], cwd="."))
+}
