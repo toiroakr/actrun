@@ -10,6 +10,7 @@ on:
 permissions:
   contents: read
   pull-requests: read
+  copilot-requests: write
 engine: copilot
 timeout-minutes: 30
 network:
