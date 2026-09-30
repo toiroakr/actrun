@@ -469,3 +469,31 @@ async test "resolve_command_on_path: a node found through a relative PATH entry 
     resolved.has_suffix("/" + relative_bin + "/node"),
   )
 }
+
+///|
+async test "resolve_command_on_path: a relative PATH entry is resolved against the given directory" {
+  let workspace = wbtest_setup_tmpdir()
+  let _ = wbtest_run("mkdir", ["-p", workspace + "/bin"])
+  let _ = wbtest_run("sh", [
+    "-c",
+    "printf '#!/bin/sh\\n' > " +
+    workspace +
+    "/bin/node && chmod +x " +
+    workspace +
+    "/bin/node",
+  ])
+  let resolved = resolve_command_on_path(
+    "node",
+    search_path=Some("bin"),
+    cwd=workspace,
+  )
+  let workspace_name = match workspace.rev_find("/") {
+    Some(idx) => workspace.unsafe_substring(start=idx, end=workspace.length())
+    None => workspace
+  }
+  assert_true(
+    resolved.has_prefix("/") &&
+    resolved.has_suffix(workspace_name + "/bin/node"),
+  )
+  wbtest_cleanup(workspace)
+}

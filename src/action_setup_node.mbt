@@ -145,6 +145,7 @@ async fn exec_make_executable(path : String) -> Bool {
 async fn resolve_command_on_path(
   command : String,
   search_path? : String? = None,
+  cwd? : String = ".",
 ) -> String {
   if command.contains("/") {
     return command
@@ -155,9 +156,9 @@ async fn resolve_command_on_path(
       run_command(
         "env",
         ["PATH=" + path, "/bin/sh", "-c", script, "sh", command],
-        cwd=".",
+        cwd~,
       )
-    None => run_command("sh", ["-c", script, "sh", command], cwd=".")
+    None => run_command("sh", ["-c", script, "sh", command], cwd~)
   }
   let resolved = stdout.trim(chars=" \t\r\n").to_owned()
   if code == 0 && resolved.has_prefix("/") {
@@ -183,7 +184,10 @@ async fn write_setup_node_shim(
   }
   let shim_path = shim_dir + "/node"
   let d = "$"
-  let node_path = resolve_command_on_path(node_bin)
+  let node_path = resolve_command_on_path(
+    node_bin,
+    cwd=resolve_task_cwd(workspace_root, ""),
+  )
   let script = "#!/bin/sh\n" +
     "set -eu\n" +
     "if [ \"" +
