@@ -55,7 +55,7 @@ pub fn local_action_uses_path(String) -> String?
 
 pub fn lower_push_workflow(WorkflowSpec) -> LoweringResult
 
-pub fn lower_push_workflow_in_workspace(WorkflowSpec, String) -> LoweringResult
+pub fn lower_push_workflow_in_workspace(WorkflowSpec, String, self_repository_root? : String) -> LoweringResult
 
 pub fn mask_report_secrets(WorkflowRunReport, Array[String]) -> WorkflowRunReport
 
@@ -160,6 +160,8 @@ pub fn store_step_result_path(String, String) -> String
 pub fn store_summary_path(String, String) -> String
 
 pub fn strip_unsupported_workflow_fields(WorkflowSpec) -> WorkflowSpec
+
+pub fn workflow_uses_self_repository(WorkflowSpec, String) -> Bool
 
 // Errors
 

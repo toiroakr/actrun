@@ -2948,6 +2948,7 @@ fn validate_wasi_job(job : JobSpec, errors : Array[String]) -> Unit {
 pub fn lower_push_workflow_in_workspace(
   workflow : WorkflowSpec,
   workspace_root : String,
+  self_repository_root? : String = "",
 ) -> LoweringResult {
   let errors : Array[String] = []
   let nodes : Array[@wf.FlowNode] = []
@@ -3106,6 +3107,17 @@ pub fn lower_push_workflow_in_workspace(
               step_index += 1
               continue
             }
+            let action_self_root = match local_action_repo_roots.get(path) {
+              Some(root) => root
+              None if self_repository_root.length() > 0 => self_repository_root
+              None => "."
+            }
+            let action_path = if is_self_repository_uses(uses) &&
+              self_repository_root.length() > 0 {
+              join_path(self_repository_root, path)
+            } else {
+              path
+            }
             previous_task_id = lower_local_action(
               workflow,
               job,
@@ -3113,7 +3125,7 @@ pub fn lower_push_workflow_in_workspace(
               step,
               resolved_step_id,
               previous_task_id,
-              path,
+              action_path,
               workspace_root,
               tasks,
               task_plans,
@@ -3122,9 +3134,7 @@ pub fn lower_push_workflow_in_workspace(
               composite_output_mappings~,
               composite_steps~,
               composite_parents~,
-              self_repository_root=local_action_repo_roots
-                .get(path)
-                .unwrap_or("."),
+              self_repository_root=action_self_root,
             )
             step_index += 1
             continue

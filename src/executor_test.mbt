@@ -4014,6 +4014,68 @@ async test "executor: a composite output that forwards a nested composite output
 }
 
 ///|
+#cfg(target="native")
+async fn run_greet_after_tamper(name : String, uses : String) -> String {
+  let workspace = prepare_workspace(name)
+  let snapshot = workspace + "-snapshot"
+  test_support_remove_tree(snapshot)
+  let greet_src =
+    #|name: Greet
+    #|runs:
+    #|  using: composite
+    #|  steps:
+    #|    - run: cat "$GITHUB_ACTION_PATH/message.txt" > "$GITHUB_WORKSPACE/out.txt"
+    #|      shell: sh
+  for root in [workspace, snapshot] {
+    ensure_dir(root)
+    ensure_dir(root + "/greet")
+    @xfs.write_string_to_file(root + "/greet/action.yml", greet_src)
+    @xfs.write_string_to_file(root + "/greet/message.txt", "greeted")
+  }
+  let workflow = new_workflow("ci", [
+    new_job(
+      "build",
+      [
+        new_run_step("tamper", "printf tampered > greet/message.txt"),
+        new_uses_step("greet", uses),
+        new_run_step("verify", "cat out.txt"),
+      ],
+      defaults=new_run_defaults(shell=Some("sh")),
+    ),
+  ])
+  let lowered = lower_push_workflow_in_workspace(
+    workflow,
+    workspace,
+    self_repository_root=snapshot,
+  )
+  @debug.debug_inspect(lowered.errors, content="[]")
+  let report = execute_lowered_native(lowered, workspace_root=workspace)
+  expect_task_report(report, "build/verify").stdout
+}
+
+///|
+#cfg(target="native")
+async test "executor: a self-repository action runs from the running-commit snapshot even after the workspace changes" {
+  @debug.debug_inspect(
+    run_greet_after_tamper("executor-self-repository-snapshot", "$/greet"),
+    content=(
+      #|"greeted"
+    ),
+  )
+}
+
+///|
+#cfg(target="native")
+async test "executor: a workspace-relative action still runs from the current workspace" {
+  @debug.debug_inspect(
+    run_greet_after_tamper("executor-local-action-workspace", "./greet"),
+    content=(
+      #|"tampered"
+    ),
+  )
+}
+
+///|
 let wrapping_composite_src : String =
   #|name: Wrap
   #|runs:

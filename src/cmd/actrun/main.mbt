@@ -3254,6 +3254,7 @@ async fn handle_clean_command(args : Array[String]) -> Int {
     "actions": actrun_root + "/github_actions",
     "artifacts": actrun_root + "/artifacts",
     "checkouts": actrun_root + "/checkouts",
+    "self-repository": actrun_root + "/self_repository",
   }
   if target == "all" {
     ignore(run_command("git", ["worktree", "prune"], cwd="."))
@@ -5846,6 +5847,32 @@ fn scan_local_action_manifest(
 }
 
 ///|
+async fn create_self_repository_snapshot(execution_root : String) -> String? {
+  let snapshot = "_build/actrun/self_repository/snap-" + @env.now().to_string()
+  let (code, stdout, _) = run_command(
+    "bash",
+    [
+      "-c", "set -euo pipefail; mkdir -p \"$2\"; (cd \"$1\" && find . -mindepth 1 -maxdepth 1 ! -name _build ! -name .git | tar -cf - -T -) | tar -C \"$2\" -xf -; cd \"$2\" && pwd",
+      "bash", execution_root, snapshot,
+    ],
+    cwd=".",
+  )
+  let path = stdout.trim(chars=" \t\r\n").to_owned()
+  if code == 0 && path.length() > 0 {
+    Some(path)
+  } else {
+    None
+  }
+}
+
+///|
+async fn remove_self_repository_snapshot(path : String) -> Unit {
+  if path.length() > 0 {
+    ignore(run_command("rm", ["-rf", path], cwd="."))
+  }
+}
+
+///|
 async fn read_stdin_line() -> String {
   let (code, stdout, _) = run_command(
     "sh",
@@ -8138,10 +8165,28 @@ async fn handle_workflow_run_command(raw_options : CliOptions) -> Int {
     return 1
   }
 
+  let self_repository_root = if @ar.workflow_uses_self_repository(
+      filtered_workflow, execution_root,
+    ) {
+    match create_self_repository_snapshot(execution_root) {
+      Some(path) => path
+      None => {
+        print_errors([
+          "failed to snapshot the running repository for $/ actions",
+        ])
+        return 1
+      }
+    }
+  } else {
+    ""
+  }
   let lowered = @ar.lower_push_workflow_in_workspace(
-    filtered_workflow, execution_root,
+    filtered_workflow,
+    execution_root,
+    self_repository_root~,
   )
   if lowered.errors.length() > 0 {
+    remove_self_repository_snapshot(self_repository_root)
     print_errors(lowered.errors)
     return 1
   }
@@ -8158,6 +8203,7 @@ async fn handle_workflow_run_command(raw_options : CliOptions) -> Int {
     sandbox_writable=options.sandbox_writable,
     allow_destructive_checkout_clean=workspace_mode != "local",
   )
+  remove_self_repository_snapshot(self_repository_root)
   let report = @ar.mask_report_secrets(raw_report, @ar.collect_secret_values())
   if report.issues.length() > 0 {
     print_errors(report.issues)

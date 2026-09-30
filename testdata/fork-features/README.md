@@ -20,6 +20,16 @@ bash scripts/fork_features_check.sh _build/native/debug/build/cmd/actrun/actrun.
 
 fork の CI（`ci.yml` の e2e ジョブ）では、fork 自身のビルドで全 fixture が `pass` することを確認している。
 
+## `$/` の解決元
+
+`uses: $/path` は「実行中のコミットのリポジトリ」を指す（`./path` は step 実行時点のワークスペースを指す）。
+`actrun workflow run` は、ワークフローが `$/` を使っているとき、実行開始前のワークスペース（`_build` と `.git` を除く）を
+`_build/actrun/self_repository/` にスナップショットし、`$/` のアクションはそこから読み込む。実行後にスナップショットは削除される。
+
+- worktree / tmp モードでは、ワークスペースは対象コミットから作られるので、スナップショットはそのコミットの内容になる
+- `--local` モードではワークスペース＝作業ツリーそのものなので、スナップショットは「実行開始時点の作業ツリー」（未コミットの変更を含む）になる
+- `--dry-run` などの実行しない経路ではスナップショットを作らず、`$/` はワークスペースから解決する
+
 ## upstream のリリースへの追従
 
 `upstream.txt` の `version` は、最後に確認した upstream のリリースを表す。

@@ -487,3 +487,70 @@ pub async fn prefetch_workflow_github_actions_native(
   )
   { fetched, errors, }
 }
+
+///|
+pub fn workflow_uses_self_repository(
+  workflow : WorkflowSpec,
+  workspace_root : String,
+) -> Bool {
+  let visited : Map[String, Bool] = Map([])
+  for job in workflow.jobs {
+    if steps_use_self_repository(job.steps, workspace_root, ".", visited) {
+      return true
+    }
+    guard job.reusable_workflow is Some(path) && path.has_prefix("./") else {
+      continue
+    }
+    let workflow_path = join_path(
+      workspace_root,
+      normalize_local_action_path(path),
+    )
+    if visited.get("workflow:" + workflow_path) is Some(_) {
+      continue
+    }
+    visited["workflow:" + workflow_path] = true
+    guard read_text(workflow_path) is Some(text) &&
+      parse_workflow_yaml(text).workflow is Some(callee) else {
+      continue
+    }
+    if workflow_uses_self_repository(callee, workspace_root) {
+      return true
+    }
+  }
+  false
+}
+
+///|
+fn steps_use_self_repository(
+  steps : Array[StepSpec],
+  workspace_root : String,
+  base_dir : String,
+  visited : Map[String, Bool],
+) -> Bool {
+  for step in steps {
+    guard step.uses is Some(uses) else { continue }
+    if is_self_repository_uses(uses) {
+      return true
+    }
+    guard uses.has_prefix("./") || uses.has_prefix("../") else { continue }
+    let action_dir = normalize_local_action_path(join_path(base_dir, uses))
+    if visited.get(action_dir) is Some(_) {
+      continue
+    }
+    visited[action_dir] = true
+    guard find_local_action_manifest(workspace_root, action_dir)
+      is Some((_, manifest_text)) &&
+      parse_local_action_yaml(manifest_text).action is Some(action) else {
+      continue
+    }
+    if steps_use_self_repository(
+        action.steps,
+        workspace_root,
+        action_dir,
+        visited,
+      ) {
+      return true
+    }
+  }
+  false
+}

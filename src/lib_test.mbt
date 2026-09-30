@@ -415,6 +415,65 @@ test "lowering: inputs refs inside string literals in a composite action step if
 }
 
 ///|
+test "self repository detection: a top-level $/ step uses the self repository" {
+  let workspace = prepare_local_action_workspace("self-repo-detect-top")
+  let workflow = new_workflow("ci", [
+    new_job("build", [new_uses_step("greet", "$/greet")]),
+  ])
+  @debug.debug_inspect(
+    workflow_uses_self_repository(workflow, workspace),
+    content="true",
+  )
+}
+
+///|
+test "self repository detection: a $/ step nested in a local composite uses the self repository" {
+  let workspace = prepare_local_action_workspace("self-repo-detect-nested")
+  test_ensure_dir(workspace + "/wrap")
+  @xfs.write_string_to_file(
+    workspace + "/wrap/action.yml",
+    (
+      #|name: Wrap
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - uses: $/greet
+    ),
+  )
+  let workflow = new_workflow("ci", [
+    new_job("build", [new_uses_step("wrap", "./wrap")]),
+  ])
+  @debug.debug_inspect(
+    workflow_uses_self_repository(workflow, workspace),
+    content="true",
+  )
+}
+
+///|
+test "self repository detection: a workflow without $/ does not use the self repository" {
+  let workspace = prepare_local_action_workspace("self-repo-detect-none")
+  test_ensure_dir(workspace + "/wrap")
+  @xfs.write_string_to_file(
+    workspace + "/wrap/action.yml",
+    (
+      #|name: Wrap
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - run: echo hi
+      #|      shell: sh
+    ),
+  )
+  let workflow = new_workflow("ci", [
+    new_job("build", [new_uses_step("wrap", "./wrap")]),
+  ])
+  @debug.debug_inspect(
+    workflow_uses_self_repository(workflow, workspace),
+    content="false",
+  )
+}
+
+///|
 test "parser: parse checkout uses step" {
   let src =
     #|name: ci
