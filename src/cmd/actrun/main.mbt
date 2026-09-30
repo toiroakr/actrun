@@ -3254,6 +3254,7 @@ async fn handle_clean_command(args : Array[String]) -> Int {
     "actions": actrun_root + "/github_actions",
     "artifacts": actrun_root + "/artifacts",
     "checkouts": actrun_root + "/checkouts",
+    "self-repository": actrun_root + "/self_repository",
   }
   if target == "all" {
     ignore(run_command("git", ["worktree", "prune"], cwd="."))
@@ -5846,13 +5847,31 @@ fn scan_local_action_manifest(
 }
 
 ///|
+let self_repository_snapshot_script : String =
+  #|set -euo pipefail
+  #|root=_build/actrun/self_repository
+  #|mkdir -p "$root"
+  #|snap=$(cd "$(mktemp -d "$root/snap.XXXXXX")" && pwd)
+  #|trap 'rm -rf "$snap"' ERR
+  #|cd "$1"
+  #|if [ "$(git rev-parse --show-toplevel 2>/dev/null || true)" = "$(pwd -P)" ]; then
+  #|  git ls-files -z -co --exclude-standard |
+  #|    while IFS= read -r -d '' f; do
+  #|      case "$f" in _build/*|.git/*) continue ;; esac
+  #|      [ -e "$f" ] && printf '%s\0' "$f"
+  #|    done |
+  #|    tar --null -cf - -T - | tar -C "$snap" -xf -
+  #|else
+  #|  find . -mindepth 1 -maxdepth 1 ! -name _build ! -name .git |
+  #|    tar -cf - -T - | tar -C "$snap" -xf -
+  #|fi
+  #|printf '%s' "$snap"
+
+///|
 async fn create_self_repository_snapshot(execution_root : String) -> String? {
   let (code, stdout, _) = run_command(
     "bash",
-    [
-      "-c", "set -euo pipefail; snap=$(mktemp -d \"${TMPDIR:-/tmp}/actrun-self-repository.XXXXXX\"); trap 'rm -rf \"$snap\"' ERR; (cd \"$1\" && find . -mindepth 1 -maxdepth 1 ! -name _build ! -name .git | tar -cf - -T -) | tar -C \"$snap\" -xf -; cd \"$snap\" && pwd",
-      "bash", execution_root,
-    ],
+    ["-c", self_repository_snapshot_script, "bash", execution_root],
     cwd=".",
   )
   let path = stdout.trim(chars=" \t\r\n").to_owned()

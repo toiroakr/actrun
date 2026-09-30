@@ -5252,28 +5252,30 @@ test "collect_third_party_actions: a self-repository action is not third-party" 
 }
 
 ///|
-async test "create_self_repository_snapshot: each run gets its own snapshot outside the workspace" {
+async test "create_self_repository_snapshot: each run gets its own snapshot of the repository files outside the workspace" {
   let workspace = "_build/wbtest-self-repository-workspace"
   ignore(run_command("rm", ["-rf", workspace], cwd="."))
-  ignore(run_command("mkdir", ["-p", workspace + "/greet"], cwd="."))
-  @xfs.write_string_to_file(workspace + "/greet/action.yml", "name: Greet\n")
+  ignore(
+    run_command(
+      "sh",
+      [
+        "-c", "mkdir -p \"$1/greet\" \"$1/ignored\" && cd \"$1\" && git init -q && printf 'ignored/\\n' > .gitignore && printf 'name: Greet\\n' > greet/action.yml && git add -A && git -c user.name=t -c user.email=t@t -c commit.gpgSign=false commit -qm init && printf 'dirty\\n' > untracked.txt && printf 'x\\n' > ignored/big.txt",
+        "sh", workspace,
+      ],
+      cwd=".",
+    ),
+  )
   let first = create_self_repository_snapshot(workspace)
   let second = create_self_repository_snapshot(workspace)
-  let (_, workspace_abs, _) = run_command(
-    "sh",
-    ["-c", "cd \"$1\" && pwd", "sh", workspace],
-    cwd=".",
-  )
-  let workspace_abs = workspace_abs.trim(chars=" \t\r\n").to_owned()
   guard first is Some(first) && second is Some(second) else {
     fail("snapshot was not created")
   }
   assert_true(first != second)
-  assert_true(
-    !first.has_prefix(workspace_abs) &&
-    !first.has_prefix(@env.current_dir().unwrap_or("") + "/_build"),
-  )
+  assert_true(first.contains("/_build/actrun/self_repository/"))
+  assert_true(!first.contains("wbtest-self-repository-workspace"))
   assert_true(@xfs.path_exists(first + "/greet/action.yml"))
+  assert_true(@xfs.path_exists(first + "/untracked.txt"))
+  assert_true(!@xfs.path_exists(first + "/ignored/big.txt"))
   remove_self_repository_snapshot(first)
   remove_self_repository_snapshot(second)
   ignore(run_command("rm", ["-rf", workspace], cwd="."))
