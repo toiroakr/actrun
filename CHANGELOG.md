@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.32.0-fork.0
+
+First release of the `@toiroakr/actrun` soft fork, based on upstream `0.32.0`.
+
+- Support `uses: $/path` (the self-repository `uses` syntax): it resolves to the repository of the file that contains it, at the running commit, from workflow steps, local composites, fetched composites and remote reusable workflows
+- Resolve `inputs.*` in the `if` and `continue-on-error` of composite action steps, and honor `continue-on-error` on composite action steps
+- Fix the built-in `setup-node` shim so it runs the host `node` instead of recursing into itself, and skip unsupported `cache` package managers instead of failing
+- Report third-party actions nested under local composites and local reusable workflows in the trust prompt
+- Ship `scripts/wasi-runner.mjs` in the npm package so the `deno` / `v8` WASM runners can find it
+
 ## 0.31.0
 
 ### Toolchain

@@ -42,9 +42,10 @@ fork の CI（`ci.yml` の e2e ジョブ）では、fork 自身のビルドで�
    「upstream が対応済みで fork のコミットを外せる機能」「引き続き fork だけの機能」と、リリースを取り込んだときの衝突の見込みを PR にコメントする
 3. コメントを見てリリースを取り込み（対応済みの fork コミットは外す）、PR をマージする
 
-リリースを取り込むときは、次の 2 点もあわせて直す。
+リリースを取り込むときは、次の 3 点もあわせて直す。
 
 - `package.json` の `version` が衝突したら `<upstream の版>-fork.0`（例: upstream が `0.33.0` なら `0.33.0-fork.0`）にする。この PR には changeset を足さない。マージするとその版がそのまま npm に公開される（下の「npm への公開」を参照）
+- 同じ PR で `CHANGELOG.md` の先頭に `## <upstream の版>-fork.0` の節を足す（例: `## 0.33.0-fork.0` と、基にした upstream の版）。GitHub Release の本文はこの節から作られ、節が無いと `CHANGELOG.md` 全体が本文になってしまう
 - `CHANGELOG.md` の先頭が衝突したら、upstream の新しい版の節と fork の節を両方残す（changesets は fork の節を upstream の節の上に書き足す）
 
 ## npm への公開
