@@ -5280,3 +5280,30 @@ async test "create_self_repository_snapshot: each run gets its own snapshot of t
   remove_self_repository_snapshot(second)
   ignore(run_command("rm", ["-rf", workspace], cwd="."))
 }
+
+///|
+async test "collect_third_party_actions: a third-party action nested under self-repository composites is reported" {
+  let workspace = "_build/wbtest-third-party-nested"
+  ignore(run_command("rm", ["-rf", workspace], cwd="."))
+  ignore(
+    run_command(
+      "sh",
+      [
+        "-c", "mkdir -p \"$1/wrapper\" \"$1/inner\" && printf 'runs:\\n  using: composite\\n  steps:\\n    - uses: $/inner\\n' > \"$1/wrapper/action.yml\" && printf 'runs:\\n  using: composite\\n  steps:\\n    - uses: third-party/action@v1\\n' > \"$1/inner/action.yml\"",
+        "sh", workspace,
+      ],
+      cwd=".",
+    ),
+  )
+  let workflow = @ar.new_workflow("ci", [
+    @ar.new_job("build", [@ar.new_uses_step("wrap", "$/wrapper")]),
+  ])
+  let found = collect_third_party_actions(workflow, workspace_root=workspace)
+  ignore(run_command("rm", ["-rf", workspace], cwd="."))
+  @debug.debug_inspect(
+    found,
+    content=(
+      #|["third-party/action@v1 (via $/wrapper)"]
+    ),
+  )
+}

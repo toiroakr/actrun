@@ -5774,6 +5774,7 @@ fn collect_third_party_actions(
               uses,
               seen,
               result,
+              workspace_root~,
             )
           }
         }
@@ -5813,7 +5814,12 @@ fn scan_local_action_manifest(
   via : String,
   seen : Map[String, Bool],
   result : Array[String],
+  workspace_root? : String = ".",
 ) -> Unit {
+  if seen.contains("dir:" + action_dir) {
+    return
+  }
+  seen["dir:" + action_dir] = true
   let yml = action_dir + "/action.yml"
   let yaml = action_dir + "/action.yaml"
   let text = try @xfs.read_file_to_string(yml) catch {
@@ -5831,7 +5837,14 @@ fn scan_local_action_manifest(
   }
   // Extract uses: lines from manifest text (simple grep approach)
   for line_view in text.split("\n") {
-    let line = line_view.trim(chars=" \t\r").to_owned()
+    let trimmed = line_view.trim(chars=" \t\r").to_owned()
+    let line = if trimmed.has_prefix("- ") {
+      String::unsafe_substring(trimmed, start=2, end=trimmed.length())
+      .trim(chars=" \t")
+      .to_owned()
+    } else {
+      trimmed
+    }
     if line.has_prefix("uses:") {
       let uses = String::unsafe_substring(line, start=5, end=line.length())
         .trim(chars=" \t'\"")
@@ -5841,6 +5854,15 @@ fn scan_local_action_manifest(
         !seen.contains(uses) {
         seen[uses] = true
         result.push(uses + " (via " + via + ")")
+      }
+      if @ar.local_action_uses_path(uses) is Some(path) {
+        scan_local_action_manifest(
+          join_path(workspace_root, path),
+          via,
+          seen,
+          result,
+          workspace_root~,
+        )
       }
     }
   }
