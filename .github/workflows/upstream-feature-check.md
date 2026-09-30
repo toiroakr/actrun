@@ -58,7 +58,7 @@ steps:
         || echo "upstream build failed" > "$out/upstream-build-failed.txt"
   - name: Collect upstream facts
     run: |
-      set -uo pipefail
+      set +e -uo pipefail
       out="$GITHUB_WORKSPACE/_build/upstream-check"
       bin=_build/native/debug/build/cmd/actrun/actrun.exe
       base=$(git merge-base HEAD FETCH_HEAD)
