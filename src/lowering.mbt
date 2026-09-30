@@ -2651,11 +2651,17 @@ fn lower_local_action(
       resolved_inputs,
       expand_expression_values=true,
     )
+    let inner_continue_on_error = substitute_context_refs_in_expr(
+      inner_step.continue_on_error,
+      "inputs.",
+      resolved_inputs,
+      expand_expression_values=true,
+    )
     validate_step_if(job.id, resolved_step_id, inner_if_condition, errors)
     validate_continue_on_error(
       job.id,
       resolved_step_id,
-      inner_step.continue_on_error,
+      inner_continue_on_error,
       errors,
     )
     let resolved_name = if inner_step.name.length() > 0 {
@@ -2689,7 +2695,7 @@ fn lower_local_action(
         env: nested_env,
         with_values: nested_with_values,
         if_condition: inner_if_condition,
-        continue_on_error: inner_step.continue_on_error,
+        continue_on_error: inner_continue_on_error,
         timeout_minutes: inner_step.timeout_minutes,
       }
       match action_ref {
@@ -2751,7 +2757,7 @@ fn lower_local_action(
             "",
           ),
           inner_if_condition,
-          inner_step.continue_on_error,
+          inner_continue_on_error,
           merge_env(
             merge_env(
               merge_env(outer_env, nested_env),
@@ -2843,7 +2849,7 @@ fn lower_local_action(
       shell,
       working_directory,
       inner_if_condition,
-      inner_step.continue_on_error,
+      inner_continue_on_error,
       env,
       action_scope=Some(action_scope),
     )

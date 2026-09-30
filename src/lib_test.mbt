@@ -532,6 +532,44 @@ test "lowering: a self-repository action whose name starts with two dots is lowe
 }
 
 ///|
+test "lowering: continue-on-error of a nested composite step can use the enclosing inputs" {
+  let workspace = prepare_local_action_workspace("lower-nested-coe-inputs")
+  test_ensure_dir(workspace + "/wrap")
+  test_ensure_dir(workspace + "/wrap/inner")
+  @xfs.write_string_to_file(
+    workspace + "/wrap/action.yml",
+    (
+      #|name: Wrap
+      #|inputs:
+      #|  allow_failure:
+      #|    default: "true"
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - id: inner
+      #|      uses: ./inner
+      #|      continue-on-error: ${{ inputs.allow_failure }}
+    ),
+  )
+  @xfs.write_string_to_file(
+    workspace + "/wrap/inner/action.yml",
+    (
+      #|name: Inner
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - run: exit 1
+      #|      shell: sh
+    ),
+  )
+  let workflow = new_workflow("ci", [
+    new_job("build", [new_uses_step("wrap", "./wrap")]),
+  ])
+  let result = lower_push_workflow_in_workspace(workflow, workspace)
+  @debug.debug_inspect(result.errors, content="[]")
+}
+
+///|
 test "parser: parse checkout uses step" {
   let src =
     #|name: ci
