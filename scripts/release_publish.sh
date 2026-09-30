@@ -3,11 +3,23 @@ set -euo pipefail
 
 # Usage: bash scripts/release_publish.sh
 # Publishes the version in package.json to npm under the latest dist-tag and
-# creates its git tag. When that version is already on npm it only creates a
-# missing git tag, so it is safe to run on every push to main.
+# creates its v<version> GitHub Release (and tag) from the matching
+# CHANGELOG.md section. Each step is skipped when it is already done, so it is
+# safe to run on every push to main and it completes a partially failed run.
 
 name="$(node -p "require('./package.json').name")"
 version="$(node -p "require('./package.json').version")"
+tag="v$version"
+
+notes="$(awk -v heading="## $version" '
+  $0 == heading { found = 1; next }
+  found && /^## / { exit }
+  found { print }
+' CHANGELOG.md | sed -e '/./,$!d')"
+if [ -z "$notes" ]; then
+  echo "CHANGELOG.md has no '## $version' section" >&2
+  exit 1
+fi
 
 if npm view "$name@$version" version > /dev/null 2>&1; then
   echo "$name@$version is already published"
@@ -18,4 +30,9 @@ else
   # not make latest on its own.
   npm publish --tag latest --access public --ignore-scripts
 fi
-pnpm exec changeset git-tag
+
+if gh release view "$tag" > /dev/null 2>&1; then
+  echo "GitHub Release $tag already exists"
+else
+  gh release create "$tag" --target "$(git rev-parse HEAD)" --title "$tag" --notes "$notes"
+fi

@@ -45,7 +45,7 @@ fork の CI（`ci.yml` の e2e ジョブ）では、fork 自身のビルドで�
 リリースを取り込むときは、次の 3 点もあわせて直す。
 
 - `package.json` の `version` が衝突したら `<upstream の版>-fork.0`（例: upstream が `0.33.0` なら `0.33.0-fork.0`）にする。この PR には changeset を足さない。マージするとその版がそのまま npm に公開される（下の「npm への公開」を参照）
-- 同じ PR で `CHANGELOG.md` の先頭に `## <upstream の版>-fork.0` の節を足す（例: `## 0.33.0-fork.0` と、基にした upstream の版）。GitHub Release の本文はこの節から作られ、節が無いと `CHANGELOG.md` 全体が本文になってしまう
+- 同じ PR で `CHANGELOG.md` の先頭に `## <upstream の版>-fork.0` の節を足す（例: `## 0.33.0-fork.0` と、基にした upstream の版）。GitHub Release の本文はこの節から作られ、節が無いと公開の前に `scripts/release_publish.sh` がエラーで止まる
 - `CHANGELOG.md` の先頭が衝突したら、upstream の新しい版の節と fork の節を両方残す（changesets は fork の節を upstream の節の上に書き足す）
 
 ## npm への公開
@@ -55,7 +55,7 @@ fork の CI（`ci.yml` の e2e ジョブ）では、fork 自身のビルドで�
 
 - fork の変更を入れる PR には `pnpm exec changeset` で changeset を足す（種類は patch でよい。pre モードでは patch / minor どちらでも `-fork.<n>` の `<n>` だけが 1 つ上がり、upstream の版の部分は変わらない）
 - main に changeset が入ると、`.github/workflows/release-fork.yml` が「chore: release」という PR を作る。この PR は `package.json` の版を上げて `CHANGELOG.md` に追記する
-- その PR をマージすると、`scripts/release_publish.sh` が npm に `latest` の dist-tag で公開し、`v<版>` の git タグと GitHub Release を作る。npm に同じ版があるときは公開を飛ばし、その版の git タグがまだなければタグと GitHub Release だけを作る
+- その PR をマージすると、`scripts/release_publish.sh` が npm に `latest` の dist-tag で公開し、`CHANGELOG.md` の `## <版>` の節を本文にして `v<版>` の GitHub Release（とタグ）を作る。npm への公開と Release の作成はそれぞれ済んでいれば飛ばすので、途中で失敗しても次に main へ push されたときに残りが実行される
 - npm への認証は Trusted Publishing（GitHub Actions の OIDC）で行い、npm の token は使わない
 
 ## 機能を追加したとき

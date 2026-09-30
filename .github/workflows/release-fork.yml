@@ -42,3 +42,7 @@ jobs:
           publish-script: bash scripts/release_publish.sh
           pr-title: "chore: release"
           commit-message: "chore: release"
+          # The action pushes the tag before creating the release and never
+          # retries a failed release, so release_publish.sh creates both.
+          create-github-releases: false
+          push-git-tags: false
