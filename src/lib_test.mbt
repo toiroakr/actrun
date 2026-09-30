@@ -4165,3 +4165,53 @@ async test "prefetch: same-named self-repository actions in different repositori
   @debug.debug_inspect(prefetch.errors, content="[]")
   assert_true(prefetch.fetched.contains("demo/prefetch-dep-tool@v1"))
 }
+
+///|
+test "lowering: an input mixing text and an expression becomes a format() call in a composite action step if" {
+  let plan = lower_composite_step_if(
+    "lower-local-action-if-inputs-mixed",
+    "inputs.provider == 'pre-main'",
+    with_values={ "provider": "pre-${{ github.ref_name }}" },
+  )
+
+  @debug.debug_inspect(
+    plan.if_condition,
+    content=(
+      #|"format('pre-{0}', (github.ref_name)) == 'pre-main'"
+    ),
+  )
+}
+
+///|
+test "lowering: an input mixing text and an expression becomes a format() call in a composite action step continue-on-error" {
+  let workspace = prepare_local_action_workspace("lower-coe-inputs-mixed")
+  test_ensure_dir(workspace + "/soft")
+  @xfs.write_string_to_file(
+    workspace + "/soft/action.yml",
+    (
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - id: try
+      #|      run: exit 1
+      #|      shell: sh
+      #|      continue-on-error: ${{ inputs.mode == 'it''s {soft}-main' }}
+    ),
+  )
+  let workflow = new_workflow("ci", [
+    new_job("build", [
+      new_uses_step("soft", "./soft", with_values={
+        "mode": "it's {soft}-${{ github.ref_name }}",
+      }),
+    ]),
+  ])
+  let result = lower_push_workflow_in_workspace(workflow, workspace)
+
+  @debug.debug_inspect(result.errors, content="[]")
+  @debug.debug_inspect(
+    expect_task_plan(result.plan, "build/soft__try").continue_on_error,
+    content=(
+      #|"${{ format('it''s {{soft}}-{0}', (github.ref_name)) == 'it''s {soft}-main' }}"
+    ),
+  )
+}

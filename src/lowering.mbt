@@ -502,7 +502,11 @@ fn substitute_context_refs_in_expr(
             Some(body) if expand_expression_values =>
               chunks.push("(" + body + ")")
             _ if expand_expression_values && value.contains("$\u{7b}\u{7b}") =>
-              chunks.push(text_slice(expression, pos, key_end))
+              chunks.push(
+                mixed_expression_format_call(value).unwrap_or(
+                  text_slice(expression, pos, key_end),
+                ),
+              )
             // Quote the value as a string literal to prevent expression injection.
             // e.g., matrix value "'true' || always()" becomes the safe literal
             // "'\'true\' || always()'" instead of raw injection into the expression.
@@ -521,6 +525,54 @@ fn substitute_context_refs_in_expr(
     }
   }
   chunks.join("")
+}
+
+///|
+fn mixed_expression_format_call(value : String) -> String? {
+  let open = "$\u{7b}\u{7b}"
+  let pattern = StringBuilder()
+  let args : Array[String] = []
+  let mut idx = 0
+  while idx < value.length() {
+    match find_substring(value, open, idx) {
+      Some(open_idx) => {
+        pattern.write_string(
+          escape_format_literal(text_slice(value, idx, open_idx)),
+        )
+        guard find_substring(value, "}}", open_idx + open.length())
+          is Some(close_idx) else {
+          return None
+        }
+        let body = text_slice(value, open_idx + open.length(), close_idx)
+          .trim(chars=" \t\r\n")
+          .to_owned()
+        if body.length() == 0 || body.contains(open) {
+          return None
+        }
+        pattern.write_string("{\{args.length()}}")
+        args.push("(" + body + ")")
+        idx = close_idx + 2
+      }
+      None => {
+        pattern.write_string(
+          escape_format_literal(text_slice(value, idx, value.length())),
+        )
+        idx = value.length()
+      }
+    }
+  }
+  Some(
+    "format(" +
+    quote_expr_string_literal(pattern.to_string()) +
+    ", " +
+    args.join(", ") +
+    ")",
+  )
+}
+
+///|
+fn escape_format_literal(text : String) -> String {
+  text.replace_all(old="{", new="{{").replace_all(old="}", new="}}")
 }
 
 ///|
