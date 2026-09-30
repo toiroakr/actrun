@@ -41,7 +41,7 @@ pub fn collect_action_refs(
       match step.uses {
         Option::Some(uses) => {
           // Skip local paths, docker://, and expressions
-          if uses.has_prefix("./") ||
+          if @ar.is_local_action_uses(uses) ||
             uses.has_prefix("docker://") ||
             uses.contains("$\u007b\u007b") {
             continue

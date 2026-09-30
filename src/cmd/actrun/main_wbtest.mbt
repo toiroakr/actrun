@@ -5242,3 +5242,11 @@ test "security: glob_match rejects path traversal patterns" {
     content="false",
   )
 }
+
+///|
+test "collect_third_party_actions: a self-repository action is not third-party" {
+  let workflow = @ar.new_workflow("ci", [
+    @ar.new_job("build", [@ar.new_uses_step("notify", "$/notify")]),
+  ])
+  @debug.debug_inspect(collect_third_party_actions(workflow), content="[]")
+}

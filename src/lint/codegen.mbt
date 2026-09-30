@@ -610,7 +610,7 @@ fn emit_uses_step(
     out.push(indent + "# " + uses)
     out.push(indent + "# command -v just > /dev/null || cargo install just")
     out.push(indent + "# mise use -g just  # alternative: mise")
-  } else if uses.has_prefix("./") {
+  } else if @ar.is_local_action_uses(uses) {
     out.push(indent + "# local action: " + uses)
     out.push(
       indent +

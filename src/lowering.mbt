@@ -206,6 +206,12 @@ fn rewrite_reusable_step_local_uses(
   source_root : String,
   execution_root : String,
 ) -> StepSpec {
+  if step.uses is Some(uses) &&
+    is_self_repository_uses(uses) &&
+    normalize_local_action_path(absolute_lowering_path(source_root)) ==
+    normalize_local_action_path(absolute_lowering_path(execution_root)) {
+    return step
+  }
   match step.uses {
     Some(uses) =>
       match parse_action_ref(uses).action {

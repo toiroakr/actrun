@@ -34,3 +34,11 @@ test "version consistency: same version no warnings" {
   ])
   @debug.assert_eq(diags.length(), 0)
 }
+
+///|
+test "collect_action_refs: self-repository uses is not resolved online" {
+  let workflow = @ar.new_workflow("test", [
+    @ar.new_job("build", [@ar.new_uses_step("s1", "$/local/action")]),
+  ])
+  @debug.debug_inspect(collect_action_refs(workflow).length(), content="0")
+}

@@ -181,3 +181,12 @@ test "S010: no false positive for normal conditions" {
   let s010 = diags.filter(fn(d) { d.code == "redundant-condition" })
   @debug.debug_inspect(s010, content="[]")
 }
+
+///|
+test "S006: self-repository uses is a valid format" {
+  let job = @ar.new_job("build", [@ar.new_uses_step("s1", "$/local/action")])
+  let workflow = @ar.new_workflow("test", [job])
+  let diags = check_semantics(workflow)
+  let s006 = diags.filter(fn(d) { d.code == "invalid-uses" })
+  @debug.debug_inspect(s006, content="[]")
+}

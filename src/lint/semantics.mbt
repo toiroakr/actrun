@@ -44,7 +44,7 @@ pub fn check_semantics(workflow : @ar.WorkflowSpec) -> Array[LintDiagnostic] {
 ///|
 fn is_valid_uses(uses : String) -> Bool {
   // Local path
-  if uses.has_prefix("./") {
+  if @ar.is_local_action_uses(uses) {
     return true
   }
   // Docker image

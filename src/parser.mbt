@@ -1543,19 +1543,21 @@ fn normalize_self_repository_uses(
 }
 
 ///|
-fn normalize_self_repository_step_uses(
+fn validate_self_repository_step_uses(
   steps : Array[StepSpec],
   errors : Array[String],
   ctx : String,
 ) -> Array[StepSpec] {
-  steps.mapi((idx, step) => {
-    ..step,
-    uses: normalize_self_repository_uses(
-      step.uses,
-      errors,
-      ctx + "[" + idx.to_string() + "].uses",
-    ),
-  })
+  for idx, step in steps {
+    ignore(
+      normalize_self_repository_uses(
+        step.uses,
+        errors,
+        ctx + "[" + idx.to_string() + "].uses",
+      ),
+    )
+  }
+  steps
 }
 
 ///|
@@ -1585,7 +1587,7 @@ fn parse_job(id : String, value : YamlValue, errors : Array[String]) -> JobSpec 
   )
   new_job(
     id,
-    normalize_self_repository_step_uses(
+    validate_self_repository_step_uses(
       if reusable_workflow is Some(_) {
         parse_job_steps_optional(
           yaml_obj_get(fields, "steps"),

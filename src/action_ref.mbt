@@ -138,6 +138,27 @@ fn self_repository_local_path(uses : String) -> Result[String, String] {
 }
 
 ///|
+pub fn is_local_action_uses(uses : String) -> Bool {
+  uses.has_prefix("./") ||
+  uses.has_prefix("../") ||
+  is_self_repository_uses(uses)
+}
+
+///|
+pub fn local_action_uses_path(uses : String) -> String? {
+  if uses.has_prefix("./") || uses.has_prefix("../") {
+    Some(uses)
+  } else if is_self_repository_uses(uses) {
+    match self_repository_local_path(uses) {
+      Ok(path) => Some(path)
+      Err(_) => None
+    }
+  } else {
+    None
+  }
+}
+
+///|
 pub fn parse_action_ref(text : String) -> ActionRefParseResult {
   let uses = text.trim(chars=" ").to_owned()
   if uses.length() == 0 {

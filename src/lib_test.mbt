@@ -321,7 +321,7 @@ test "parser: parse step continue-on-error" {
 }
 
 ///|
-test "parser: self-repository step uses is normalized to a repository-root local path" {
+test "parser: self-repository step uses is kept as written so it can resolve from the running commit" {
   let src =
     #|name: ci
     #|on: push
@@ -330,12 +330,14 @@ test "parser: self-repository step uses is normalized to a repository-root local
     #|    runs-on: ubuntu-latest
     #|    steps:
     #|      - uses: $/notify
-  let workflow = expect_workflow(parse_workflow_yaml(src))
+  let parsed = parse_workflow_yaml(src)
+  let workflow = expect_workflow(parsed)
 
+  @debug.debug_inspect(parsed.errors, content="[]")
   @debug.debug_inspect(
     workflow.jobs[0].steps[0].uses.unwrap_or(""),
     content=(
-      #|"./notify"
+      #|"$/notify"
     ),
   )
 }

@@ -5722,8 +5722,7 @@ async fn run_in_docker_container(options : CliOptions) -> Int {
 ///|
 fn is_trusted_action_owner(uses : String) -> Bool {
   uses.has_prefix("actions/") ||
-  uses.has_prefix("./") ||
-  uses.has_prefix("../") ||
+  @ar.is_local_action_uses(uses) ||
   uses.has_prefix("docker://") ||
   uses.has_prefix("wasm://") ||
   uses.has_prefix("builtin://")
@@ -5768,9 +5767,9 @@ fn collect_third_party_actions(
             result.push(uses)
           }
           // Scan local composite action internals
-          if uses.has_prefix("./") || uses.has_prefix("../") {
+          if @ar.local_action_uses_path(uses) is Some(path) {
             scan_local_action_manifest(
-              join_path(workspace_root, uses),
+              join_path(workspace_root, path),
               uses,
               seen,
               result,

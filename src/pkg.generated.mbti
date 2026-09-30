@@ -49,6 +49,10 @@ pub fn find_workflow_step_report(WorkflowRunReport, String) -> WorkflowStepRepor
 
 pub fn inspect_wasm_module(Bytes) -> WasmModuleInfo
 
+pub fn is_local_action_uses(String) -> Bool
+
+pub fn local_action_uses_path(String) -> String?
+
 pub fn lower_push_workflow(WorkflowSpec) -> LoweringResult
 
 pub fn lower_push_workflow_in_workspace(WorkflowSpec, String) -> LoweringResult
