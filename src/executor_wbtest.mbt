@@ -421,7 +421,7 @@ async test "write_setup_node_shim: a bare node command is exec'd by absolute pat
 }
 
 ///|
-async test "write_setup_node_shim: the PATH lookup skips entries that are not executable files" {
+async test "resolve_command_on_path: skips entries that are not executable files" {
   let workspace = wbtest_setup_tmpdir()
   let _ = wbtest_run("mkdir", ["-p", workspace + "/dir-first/node"])
   let _ = wbtest_run("mkdir", ["-p", workspace + "/plain-first"])
@@ -435,30 +435,23 @@ async test "write_setup_node_shim: the PATH lookup skips entries that are not ex
     workspace +
     "/real/node",
   ])
-  let original_path = @env.get_env_var("PATH").unwrap_or("")
-  @env.set_env_var(
-    "PATH",
-    workspace +
-    "/dir-first:" +
-    workspace +
-    "/plain-first:" +
-    workspace +
-    "/real:" +
-    original_path,
+  let resolved = resolve_command_on_path(
+    "node",
+    search_path=Some(
+      workspace +
+      "/dir-first:" +
+      workspace +
+      "/plain-first:" +
+      workspace +
+      "/real",
+    ),
   )
-  let shim_dir = write_setup_node_shim(
-    workspace, "build/setup", "node", "v20.0.0",
-  )
-  @env.set_env_var("PATH", original_path)
-  guard shim_dir is Some(dir) else { fail("shim was not written") }
-  let script = @xfs.read_file_to_string(dir + "/node")
-  assert_true(script.contains("exec '" + workspace + "/real/node'"))
+  @debug.assert_eq(resolved, workspace + "/real/node")
   wbtest_cleanup(workspace)
 }
 
 ///|
-async test "write_setup_node_shim: a node found through a relative PATH entry is exec'd by absolute path" {
-  let workspace = wbtest_setup_tmpdir()
+async test "resolve_command_on_path: a node found through a relative PATH entry is returned as an absolute path" {
   let relative_bin = "_build/wbtest-relative-path-bin"
   let _ = wbtest_run("mkdir", ["-p", relative_bin])
   let _ = wbtest_run("sh", [
@@ -469,17 +462,10 @@ async test "write_setup_node_shim: a node found through a relative PATH entry is
     relative_bin +
     "/node",
   ])
-  let original_path = @env.get_env_var("PATH").unwrap_or("")
-  @env.set_env_var("PATH", relative_bin + ":" + original_path)
-  let shim_dir = write_setup_node_shim(
-    workspace, "build/setup", "node", "v20.0.0",
-  )
-  @env.set_env_var("PATH", original_path)
+  let resolved = resolve_command_on_path("node", search_path=Some(relative_bin))
   let _ = wbtest_run("rm", ["-rf", relative_bin])
-  guard shim_dir is Some(dir) else { fail("shim was not written") }
-  let script = @xfs.read_file_to_string(dir + "/node")
   assert_true(
-    script.contains("exec '/") && script.contains("/" + relative_bin + "/node'"),
+    resolved.has_prefix("/") &&
+    resolved.has_suffix("/" + relative_bin + "/node"),
   )
-  wbtest_cleanup(workspace)
 }

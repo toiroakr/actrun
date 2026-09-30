@@ -142,18 +142,23 @@ async fn exec_make_executable(path : String) -> Bool {
 }
 
 ///|
-async fn resolve_command_on_path(command : String) -> String {
+async fn resolve_command_on_path(
+  command : String,
+  search_path? : String? = None,
+) -> String {
   if command.contains("/") {
     return command
   }
-  let (code, stdout, _) = run_command(
-    "sh",
-    [
-      "-c", "p=$(command -v -- \"$1\") || exit 1; case $p in /*) ;; */*) p=\"$PWD/$p\" ;; esac; printf '%s' \"$p\"",
-      "sh", command,
-    ],
-    cwd=".",
-  )
+  let script = "p=$(command -v -- \"$1\") || exit 1; case $p in /*) ;; */*) p=\"$PWD/$p\" ;; esac; printf '%s' \"$p\""
+  let (code, stdout, _) = match search_path {
+    Some(path) =>
+      run_command(
+        "env",
+        ["PATH=" + path, "/bin/sh", "-c", script, "sh", command],
+        cwd=".",
+      )
+    None => run_command("sh", ["-c", script, "sh", command], cwd=".")
+  }
   let resolved = stdout.trim(chars=" \t\r\n").to_owned()
   if code == 0 && resolved.has_prefix("/") {
     resolved
