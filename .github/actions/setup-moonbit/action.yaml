@@ -2,9 +2,13 @@ name: Setup MoonBit
 description: Install a MoonBit toolchain for CI
 inputs:
   version:
-    description: MoonBit release version to install
+    description: >-
+      MoonBit release version to install (empty installs the latest).
+      Pinned to the toolchain upstream last passed `moon check --deny-warn` with:
+      moonc 0.10.14 / moon 0.1.20260920 turn implicit_impl_as_method and
+      test_unqualified_package into errors across unchanged upstream code.
     required: false
-    default: ""
+    default: "0.10.13+cbb11c36f"
 runs:
   using: composite
   steps:
