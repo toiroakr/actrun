@@ -12,6 +12,7 @@ permissions:
   pull-requests: read
   copilot-requests: write
 engine: copilot
+checkout: false
 timeout-minutes: 30
 network:
   allowed:
@@ -33,6 +34,11 @@ safe-outputs:
     max: 1
     hide-older-comments: true
 steps:
+  - name: Check out this pull request
+    uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    with:
+      fetch-depth: 0
+      persist-credentials: false
   - name: Fetch the upstream release named in upstream.txt
     run: |
       set -euo pipefail
