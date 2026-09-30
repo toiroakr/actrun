@@ -53,7 +53,7 @@ fork の CI（`ci.yml` の e2e ジョブ）では、fork 自身のビルドで�
 この fork は npm に [`@toiroakr/actrun`](https://www.npmjs.com/package/@toiroakr/actrun) として公開する。
 版は `<upstream の版>-fork.<n>`（例: `0.32.0-fork.1`）で、[changesets](https://github.com/changesets/changesets) の pre モード（`.changeset/pre.json` の tag が `fork`）で付ける。
 
-- fork の変更を入れる PR には `pnpm exec changeset` で changeset を足す（種類は patch でよい。pre モードでは patch / minor どちらでも `-fork.<n>` の `<n>` だけが 1 つ上がり、upstream の版の部分は変わらない）
+- fork の変更を入れる PR には `pnpm exec changeset` で changeset を足す（changesets の CLI は Node.js 22.11 以上が必要。種類は patch でよい。pre モードでは patch / minor どちらでも `-fork.<n>` の `<n>` だけが 1 つ上がり、upstream の版の部分は変わらない）
 - main に changeset が入ると、`.github/workflows/release-fork.yml` が「chore: release」という PR を作る。この PR は `package.json` の版を上げて `CHANGELOG.md` に追記する
 - その PR をマージすると、`scripts/release_publish.sh` が npm に `latest` の dist-tag で公開し、`CHANGELOG.md` の `## <版>` の節を本文にして `v<版>` の GitHub Release（とタグ）を作る。npm への公開と Release の作成はそれぞれ済んでいれば飛ばすので、途中で失敗しても次に main へ push されたときに残りが実行される
 - npm への認証は Trusted Publishing（GitHub Actions の OIDC）で行い、npm の token は使わない
