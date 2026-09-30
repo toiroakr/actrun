@@ -1,7 +1,7 @@
 {
-  "name": "@mizchi/actrun",
-  "version": "0.32.0",
-  "description": "A local GitHub Actions runner",
+  "name": "@toiroakr/actrun",
+  "version": "0.32.0-fork.0",
+  "description": "A local GitHub Actions runner (a soft fork of @mizchi/actrun)",
   "type": "module",
   "exports": {
     ".": {
@@ -37,7 +37,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/mizchi/actrun.git"
+    "url": "git+https://github.com/toiroakr/actrun.git"
+  },
+  "homepage": "https://github.com/toiroakr/actrun#readme",
+  "bugs": {
+    "url": "https://github.com/toiroakr/actrun/issues"
   },
   "license": "Apache-2.0",
   "engines": {
@@ -45,6 +49,7 @@
   },
   "packageManager": "pnpm@10.33.0",
   "devDependencies": {
+    "@changesets/cli": "^3.0.3",
     "oxc-minify": "^0.120.0"
   }
 }
