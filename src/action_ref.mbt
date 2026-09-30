@@ -126,7 +126,7 @@ fn is_self_repository_uses(uses : String) -> Bool {
 fn self_repository_local_path(uses : String) -> Result[String, String] {
   let path = substring(uses, SelfRepositoryPrefix.length(), uses.length())
   let normalized = normalize_local_action_path("./" + path)
-  if path.length() == 0 {
+  if normalized == "." {
     Err("must include a path after $/")
   } else if path.contains("@") {
     Err("must not include @ref: $/ always resolves to the running commit")

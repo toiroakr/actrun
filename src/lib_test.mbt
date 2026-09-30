@@ -381,6 +381,26 @@ test "parser: self-repository uses with @ref is a parse error" {
 }
 
 ///|
+test "parser: self-repository uses that normalizes to the repository root is a parse error" {
+  let src =
+    #|name: ci
+    #|on: push
+    #|jobs:
+    #|  build:
+    #|    runs-on: ubuntu-latest
+    #|    steps:
+    #|      - uses: $/greet/..
+  let parsed = parse_workflow_yaml(src)
+
+  @debug.debug_inspect(
+    parsed.errors,
+    content=(
+      #|["jobs.build.steps[0].uses '$/greet/..' must include a path after $/"]
+    ),
+  )
+}
+
+///|
 test "parser: self-repository uses with an empty path is a parse error" {
   let src =
     #|name: ci
