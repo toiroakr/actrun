@@ -222,11 +222,17 @@ fn basename_of(path : String) -> String {
 }
 
 ///|
-fn wasi_runner_shim_candidates(workspace_root : String) -> Array[String] {
-  let candidates = [
-    "scripts/wasi-runner.mjs", "node_modules/@toiroakr/actrun/scripts/wasi-runner.mjs",
-    "node_modules/@mizchi/actrun/scripts/wasi-runner.mjs",
-  ]
+fn wasi_runner_shim_candidates(
+  workspace_root : String,
+  configured? : String = "",
+) -> Array[String] {
+  let candidates = if configured.length() > 0 { [configured] } else { [] }
+  candidates.push_iter(
+    [
+      "scripts/wasi-runner.mjs", "node_modules/@toiroakr/actrun/scripts/wasi-runner.mjs",
+      "node_modules/@mizchi/actrun/scripts/wasi-runner.mjs",
+    ].iter(),
+  )
   if workspace_root.length() > 0 {
     candidates.push(workspace_root + "/scripts/wasi-runner.mjs")
     candidates.push(
@@ -242,9 +248,12 @@ fn wasi_runner_shim_candidates(workspace_root : String) -> Array[String] {
 
 ///|
 fn find_wasi_runner_shim(workspace_root : String) -> String {
-  // Look for wasi-runner.mjs relative to cwd first, then workspace,
+  // Look for wasi-runner.mjs at ACTRUN_WASI_RUNNER_SHIM first, then cwd, then workspace,
   // then installed locations used by packaged/containerized actrun.
-  let candidates = wasi_runner_shim_candidates(workspace_root)
+  let candidates = wasi_runner_shim_candidates(
+    workspace_root,
+    configured=@env.get_env_var("ACTRUN_WASI_RUNNER_SHIM").unwrap_or(""),
+  )
   for candidate in candidates {
     if @xfs.path_exists(candidate) {
       return absolute_exec_path(candidate)

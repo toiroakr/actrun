@@ -167,3 +167,15 @@ test "wasi_runner_shim_candidates: includes the shim shipped in the @toiroakr/ac
     true,
   )
 }
+
+///|
+test "wasi_runner_shim_candidates: an explicitly configured shim path is tried first" {
+  let candidates = wasi_runner_shim_candidates(
+    "/tmp/actrun-workspace",
+    configured="/opt/npm/lib/node_modules/@toiroakr/actrun/scripts/wasi-runner.mjs",
+  )
+  @debug.assert_eq(
+    candidates[0],
+    "/opt/npm/lib/node_modules/@toiroakr/actrun/scripts/wasi-runner.mjs",
+  )
+}
