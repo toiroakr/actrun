@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # Usage: bash scripts/release_publish.sh
-# Publishes the version in package.json to npm under the latest dist-tag and
-# creates its v<version> GitHub Release (and tag) from the matching
+# Tags the current commit as v<version>, publishes that version to npm under
+# the latest dist-tag, and creates its GitHub Release from the matching
 # CHANGELOG.md section. Each step is skipped when it is already done, so it is
 # safe to run on every push to main and it completes a partially failed run.
 
@@ -21,6 +21,15 @@ if [ -z "$notes" ]; then
   exit 1
 fi
 
+# Tag before publishing so a retry on a later push still points the tag at
+# the commit that produced the package.
+if git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then
+  echo "Tag $tag already exists"
+else
+  git tag "$tag" HEAD
+  git push origin "refs/tags/$tag"
+fi
+
 if npm view "$name@$version" version > /dev/null 2>&1; then
   echo "$name@$version is already published"
 else
@@ -34,5 +43,5 @@ fi
 if gh release view "$tag" > /dev/null 2>&1; then
   echo "GitHub Release $tag already exists"
 else
-  gh release create "$tag" --target "$(git rev-parse HEAD)" --title "$tag" --notes "$notes"
+  gh release create "$tag" --verify-tag --title "$tag" --notes "$notes"
 fi
