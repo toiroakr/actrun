@@ -474,6 +474,28 @@ test "self repository detection: a workflow without $/ does not use the self rep
 }
 
 ///|
+test "lowering: a self-repository action whose name starts with two dots is lowered" {
+  let workspace = prepare_local_action_workspace("lower-self-repo-dot-dot-name")
+  test_ensure_dir(workspace + "/..hidden")
+  @xfs.write_string_to_file(
+    workspace + "/..hidden/action.yml",
+    (
+      #|name: Hidden
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - run: echo hidden
+      #|      shell: sh
+    ),
+  )
+  let workflow = new_workflow("ci", [
+    new_job("build", [new_uses_step("hidden", "$/..hidden")]),
+  ])
+  let result = lower_push_workflow_in_workspace(workflow, workspace)
+  @debug.debug_inspect(result.errors, content="[]")
+}
+
+///|
 test "parser: parse checkout uses step" {
   let src =
     #|name: ci

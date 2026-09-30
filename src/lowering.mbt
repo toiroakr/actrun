@@ -2517,7 +2517,9 @@ fn lower_manifest_backed_action(
 ///|
 fn is_path_traversal(path : String) -> Bool {
   let normalized = normalize_local_action_path(path)
-  normalized.has_prefix("..") || normalized.has_prefix("/")
+  normalized == ".." ||
+  normalized.has_prefix("../") ||
+  normalized.has_prefix("/")
 }
 
 ///|
