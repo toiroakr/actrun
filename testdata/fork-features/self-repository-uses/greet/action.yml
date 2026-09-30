@@ -2,5 +2,5 @@ name: Greet
 runs:
   using: composite
   steps:
-    - run: echo greeted >> "$GITHUB_WORKSPACE/greet.log"
+    - run: cat "$GITHUB_ACTION_PATH/message.txt" >> "$GITHUB_WORKSPACE/greet.log"
       shell: bash

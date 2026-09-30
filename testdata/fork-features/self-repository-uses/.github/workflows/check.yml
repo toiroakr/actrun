@@ -4,6 +4,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
+      - run: printf 'tampered\n' > greet/message.txt
       - uses: $/greet
       - uses: ./.github/actions/wrap
-      - run: test "$(grep -c greeted greet.log)" = 2
+      - run: test "$(grep -c '^greeted$' greet.log)" = 2

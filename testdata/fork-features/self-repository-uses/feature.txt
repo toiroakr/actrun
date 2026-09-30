@@ -1,3 +1,3 @@
 id=self-repository-uses
 commit=feat: support the $/ self-repository uses syntax
-summary=`uses: $/path` resolves to the running repository at the running commit, from workflow steps and from inside composite actions
+summary=`uses: $/path` resolves to the running repository at the running commit, from workflow steps and from inside composite actions, even after a step changes the workspace
