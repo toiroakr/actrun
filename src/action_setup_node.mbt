@@ -418,14 +418,13 @@ async fn execute_setup_node_native(
     output_values["node-architecture"] = architecture_input
   }
   let state_updates : Map[String, String] = Map([])
-  if normalized_cache_input.length() > 0 {
-    if normalized_cache_input != "npm" {
-      return failure_execution_result(
-        plan,
-        workspace_root,
-        "setup-node cache '\{normalized_cache_input}' is not supported yet",
-      )
-    }
+  let mut warning = ""
+  if normalized_cache_input.length() > 0 && normalized_cache_input != "npm" {
+    // A cache miss never changes a step's outcome on GitHub either, so an
+    // unsupported package manager degrades to "no cache" instead of failing.
+    warning = "warning: setup-node cache '\{normalized_cache_input}' is not supported yet; continuing without a dependency cache"
+    output_values["cache-hit"] = "false"
+  } else if normalized_cache_input.length() > 0 {
     let dependency_input = resolved_plan_env
       .get("INPUT_CACHE_DEPENDENCY_PATH")
       .unwrap_or("")
@@ -500,7 +499,7 @@ async fn execute_setup_node_native(
     env_updates["NODE_AUTH_TOKEN"] = node_auth_token
   }
   {
-    report: task_report_success(plan, workspace_root),
+    report: { ..task_report_success(plan, workspace_root), stderr: warning, },
     env_updates,
     path_entries: [shim_dir],
     output_values,

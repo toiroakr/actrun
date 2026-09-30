@@ -3365,6 +3365,59 @@ async test "executor: builtin setup-node exposes requested node version output a
 
 ///|
 #cfg(target="native")
+async test "executor: builtin setup-node skips an unsupported cache manager with a warning instead of failing" {
+  let workspace = prepare_workspace("executor-builtin-setup-node-cache-pnpm")
+  let node_log_path = workspace + "/setup-node.log"
+  let fake_node = test_support_prepare_fake_version_node_bin(
+    workspace, node_log_path, "24.9.0",
+  )
+
+  let workflow = new_workflow("ci", [
+    new_job(
+      "build",
+      [
+        new_uses_step("setup", "actions/setup-node@v4", with_values={
+          "node-version": "20",
+          "cache": "pnpm",
+        }),
+        new_run_step(
+          "verify",
+          "printf '%s' \"${{ steps.setup.outputs.cache-hit }}\"",
+          shell=Some("bash"),
+        ),
+      ],
+      env={ "ACTRUN_SETUP_NODE_BIN": fake_node },
+      defaults=new_run_defaults(shell=Some("bash")),
+    ),
+  ])
+
+  let lowered = lower_push_workflow(workflow)
+  let report = execute_lowered_native(lowered, workspace_root=workspace)
+
+  let setup = expect_task_report(report, "build/setup")
+  @debug.debug_inspect(
+    setup.status,
+    content=(
+      #|"success"
+    ),
+  )
+  @debug.debug_inspect(
+    setup.stderr,
+    content=(
+      #|"warning: setup-node cache 'pnpm' is not supported yet; continuing without a dependency cache"
+    ),
+  )
+  let verify = expect_task_report(report, "build/verify")
+  @debug.debug_inspect(
+    verify.stdout,
+    content=(
+      #|"false"
+    ),
+  )
+}
+
+///|
+#cfg(target="native")
 async test "executor: builtin setup-node works in job container run step" {
   let workspace = prepare_workspace("executor-builtin-setup-node-container")
   let node_log_path = workspace + "/setup-node-container.log"
