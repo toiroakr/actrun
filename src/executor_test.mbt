@@ -3702,6 +3702,183 @@ async test "executor: local composite action runs inner steps" {
 
 ///|
 #cfg(target="native")
+async fn run_failing_composite(
+  name : String,
+  action_src : String,
+  continue_on_error : String,
+  nested_src? : String = "",
+) -> WorkflowRunReport {
+  let workspace = prepare_workspace(name)
+  ensure_dir(workspace + "/setup")
+  @xfs.write_string_to_file(workspace + "/setup/action.yml", action_src)
+  if nested_src.length() > 0 {
+    ensure_dir(workspace + "/setup/nested")
+    @xfs.write_string_to_file(
+      workspace + "/setup/nested/action.yml",
+      nested_src,
+    )
+  }
+  let workflow = new_workflow("ci", [
+    new_job(
+      "build",
+      [
+        new_uses_step("setup", "./setup", continue_on_error~),
+        new_run_step(
+          "verify", "printf '%s|%s' \"${{ steps.setup.outcome }}\" \"${{ steps.setup.conclusion }}\"",
+        ),
+      ],
+      defaults=new_run_defaults(shell=Some("sh")),
+    ),
+  ])
+  let lowered = lower_push_workflow_in_workspace(workflow, workspace)
+  @debug.debug_inspect(lowered.errors, content="[]")
+  execute_lowered_native(lowered, workspace_root=workspace)
+}
+
+///|
+let failing_composite_src : String =
+  #|name: Setup
+  #|runs:
+  #|  using: composite
+  #|  steps:
+  #|    - id: fail
+  #|      run: exit 1
+  #|      shell: sh
+  #|    - id: after
+  #|      run: echo after
+  #|      shell: sh
+
+///|
+#cfg(target="native")
+async test "executor: continue-on-error on a composite step lets the job continue after an inner failure" {
+  let report = run_failing_composite(
+    "executor-composite-coe", failing_composite_src, "true",
+  )
+
+  @debug.debug_inspect(report.ok, content="true")
+  @debug.debug_inspect(
+    expect_task_report(report, "build/verify").stdout,
+    content=(
+      #|"failure|success"
+    ),
+  )
+}
+
+///|
+#cfg(target="native")
+async test "executor: continue-on-error on a composite step still skips the remaining inner steps" {
+  let report = run_failing_composite(
+    "executor-composite-coe-skip", failing_composite_src, "true",
+  )
+
+  @debug.debug_inspect(
+    expect_task_report(report, "build/setup__after").status,
+    content=(
+      #|"skipped"
+    ),
+  )
+}
+
+///|
+#cfg(target="native")
+async test "executor: continue-on-error on a composite step still runs always() inner steps" {
+  let report = run_failing_composite(
+    "executor-composite-coe-always",
+    failing_composite_src.replace(
+      old="    - id: after\n",
+      new="    - id: after\n      if: always()\n",
+    ),
+    "true",
+  )
+
+  @debug.debug_inspect(
+    expect_task_report(report, "build/setup__after").status,
+    content=(
+      #|"success"
+    ),
+  )
+}
+
+///|
+#cfg(target="native")
+async test "executor: an inner failure in a composite step without continue-on-error fails the job" {
+  let report = run_failing_composite(
+    "executor-composite-no-coe", failing_composite_src, "false",
+  )
+
+  @debug.debug_inspect(report.ok, content="false")
+  @debug.debug_inspect(
+    expect_task_report(report, "build/verify").status,
+    content=(
+      #|"skipped"
+    ),
+  )
+}
+
+///|
+let wrapping_composite_src : String =
+  #|name: Wrap
+  #|runs:
+  #|  using: composite
+  #|  steps:
+  #|    - id: nested
+  #|      uses: ./nested
+  #|      continue-on-error: NESTED_COE
+  #|    - id: after
+  #|      run: echo after
+  #|      shell: sh
+
+///|
+#cfg(target="native")
+async test "executor: continue-on-error on a nested composite step absorbs the failure inside the outer composite" {
+  let report = run_failing_composite(
+    "executor-composite-nested-coe",
+    wrapping_composite_src.replace(old="NESTED_COE", new="true"),
+    "false",
+    nested_src=failing_composite_src,
+  )
+
+  @debug.debug_inspect(report.ok, content="true")
+  @debug.debug_inspect(
+    expect_task_report(report, "build/setup__after").status,
+    content=(
+      #|"success"
+    ),
+  )
+  @debug.debug_inspect(
+    expect_task_report(report, "build/verify").stdout,
+    content=(
+      #|"success|success"
+    ),
+  )
+}
+
+///|
+#cfg(target="native")
+async test "executor: a nested composite failure propagates to the outermost composite step" {
+  let report = run_failing_composite(
+    "executor-composite-nested-top-coe",
+    wrapping_composite_src.replace(old="NESTED_COE", new="false"),
+    "true",
+    nested_src=failing_composite_src,
+  )
+
+  @debug.debug_inspect(
+    expect_task_report(report, "build/setup__after").status,
+    content=(
+      #|"skipped"
+    ),
+  )
+  @debug.debug_inspect(
+    expect_task_report(report, "build/verify").stdout,
+    content=(
+      #|"failure|success"
+    ),
+  )
+}
+
+///|
+#cfg(target="native")
 async test "executor: local composite action supports nested uses" {
   let workspace = prepare_workspace("executor-local-action-nested-uses")
   ensure_dir(workspace + "/.github")
