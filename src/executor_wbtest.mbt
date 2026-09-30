@@ -414,7 +414,7 @@ async test "write_setup_node_shim: a bare node command is exec'd by absolute pat
   let exec_line = script
     .split("\n")
     .filter(line => line.has_prefix("exec "))
-    .map(line => line.to_string())
+    .map(line => line.to_owned())
     .collect()
   assert_true(exec_line.length() == 1 && exec_line[0].has_prefix("exec '/"))
   wbtest_cleanup(workspace)

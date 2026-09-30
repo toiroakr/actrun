@@ -264,7 +264,7 @@ fn cached_repo_root_of_local_path(
   let segments = text_slice(target, cache_root.length() + 1, target.length()).split(
     "/",
   )
-  let parts = segments.map(part => part.to_string()).collect()
+  let parts = segments.map(part => part.to_owned()).collect()
   if parts.length() < 3 {
     None
   } else {
