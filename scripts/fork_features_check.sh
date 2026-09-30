@@ -18,6 +18,14 @@ TIMEOUT_SECONDS="${FORK_FEATURES_TIMEOUT:-120}"
 LOG_DIR="${FORK_FEATURES_LOG_DIR:-$REPO_ROOT/_build/fork-features}"
 mkdir -p "$LOG_DIR"
 
+if command -v timeout > /dev/null; then
+  with_timeout=(timeout "$TIMEOUT_SECONDS")
+elif command -v gtimeout > /dev/null; then
+  with_timeout=(gtimeout "$TIMEOUT_SECONDS")
+else
+  with_timeout=()
+fi
+
 failed=0
 for dir in "$FEATURES_DIR"/*/; do
   id="$(sed -n 's/^id=//p' "$dir/feature.txt")"
@@ -29,7 +37,7 @@ for dir in "$FEATURES_DIR"/*/; do
       git add -A &&
       git -c user.name=fork-features -c user.email=fork-features@localhost \
         -c commit.gpgSign=false commit -qm fixture &&
-      timeout "$TIMEOUT_SECONDS" "$@" workflow run .github/workflows/check.yml --trust
+      ${with_timeout[@]+"${with_timeout[@]}"} "$@" workflow run .github/workflows/check.yml --trust
   ) >"$LOG_DIR/$id.log" 2>&1
   if [ "$?" -eq 0 ]; then
     printf '%s\tpass\n' "$id"

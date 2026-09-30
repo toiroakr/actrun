@@ -8,4 +8,4 @@ jobs:
         with:
           node-version: 1.2.3
       - run: test "$(node --version)" = v1.2.3
-      - run: test "$(timeout 30 node -e 'console.log(6 * 7)')" = 42
+      - run: test "$(node -e 'console.log(6 * 7)')" = 42
