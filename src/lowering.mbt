@@ -435,6 +435,12 @@ fn substitute_matrix_refs_in_expr(
 }
 
 ///|
+fn is_context_ref_continuation(expression : String, pos : Int) -> Bool {
+  let c = expression.unsafe_get(pos)
+  is_matrix_ident_code(c) || c == '.'.to_int().to_uint16()
+}
+
+///|
 fn substitute_context_refs_in_expr(
   expression : String,
   prefix : String,
@@ -444,6 +450,10 @@ fn substitute_context_refs_in_expr(
   let mut idx = 0
   while idx < expression.length() {
     match find_substring(expression, prefix, idx) {
+      Some(pos) if pos > 0 && is_context_ref_continuation(expression, pos - 1) => {
+        chunks.push(text_slice(expression, idx, pos + prefix.length()))
+        idx = pos + prefix.length()
+      }
       Some(pos) => {
         chunks.push(text_slice(expression, idx, pos))
         let key_start = pos + prefix.length()
@@ -2567,7 +2577,12 @@ fn lower_local_action(
     let inner_step = action.steps[inner_index]
     let inner_step_id = default_step_id(inner_step, inner_index)
     let resolved_step_id = composite_step_id(outer_step_id, inner_step_id)
-    validate_step_if(job.id, resolved_step_id, inner_step.if_condition, errors)
+    let inner_if_condition = substitute_context_refs_in_expr(
+      inner_step.if_condition,
+      "inputs.",
+      resolved_inputs,
+    )
+    validate_step_if(job.id, resolved_step_id, inner_if_condition, errors)
     validate_continue_on_error(
       job.id,
       resolved_step_id,
@@ -2604,7 +2619,7 @@ fn lower_local_action(
         working_directory: None,
         env: nested_env,
         with_values: nested_with_values,
-        if_condition: inner_step.if_condition,
+        if_condition: inner_if_condition,
         continue_on_error: inner_step.continue_on_error,
         timeout_minutes: inner_step.timeout_minutes,
       }
@@ -2664,7 +2679,7 @@ fn lower_local_action(
             None,
             "",
           ),
-          inner_step.if_condition,
+          inner_if_condition,
           inner_step.continue_on_error,
           merge_env(
             merge_env(
@@ -2754,7 +2769,7 @@ fn lower_local_action(
       needs,
       shell,
       working_directory,
-      inner_step.if_condition,
+      inner_if_condition,
       inner_step.continue_on_error,
       env,
       action_scope=Some(action_scope),

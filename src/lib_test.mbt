@@ -1559,6 +1559,65 @@ test "lowering: self-repository uses inside a local composite action resolves fr
 }
 
 ///|
+fn lower_composite_step_if(
+  name : String,
+  if_condition : String,
+) -> TaskPlan raise {
+  let workspace = prepare_local_action_workspace(name)
+  test_ensure_dir(workspace + "/notify")
+  let action_src =
+    #|name: Notify
+    #|inputs:
+    #|  provider:
+    #|    default: slack
+    #|runs:
+    #|  using: composite
+    #|  steps:
+    #|    - id: send
+    #|      if: IF_CONDITION
+    #|      run: echo send
+    #|      shell: bash
+  @xfs.write_string_to_file(
+    workspace + "/notify/action.yml",
+    action_src.replace(old="IF_CONDITION", new=if_condition),
+  )
+  let workflow = new_workflow("ci", [
+    new_job("test", [new_uses_step("notify", "./notify")]),
+  ])
+  let result = lower_push_workflow_in_workspace(workflow, workspace)
+  @debug.debug_inspect(result.errors, content="[]")
+  expect_task_plan(result.plan, "test/notify__send")
+}
+
+///|
+test "lowering: inputs refs in a composite action step if are substituted with the resolved input" {
+  let plan = lower_composite_step_if(
+    "lower-local-action-if-inputs", "inputs.provider == 'slack'",
+  )
+
+  @debug.debug_inspect(
+    plan.if_condition,
+    content=(
+      #|"'slack' == 'slack'"
+    ),
+  )
+}
+
+///|
+test "lowering: github.event.inputs refs in a composite action step if are left untouched" {
+  let plan = lower_composite_step_if(
+    "lower-local-action-if-event-inputs", "github.event.inputs.provider == 'slack'",
+  )
+
+  @debug.debug_inspect(
+    plan.if_condition,
+    content=(
+      #|"github.event.inputs.provider == 'slack'"
+    ),
+  )
+}
+
+///|
 test "lowering: local composite action nested builtin uses becomes action task" {
   let workspace = prepare_local_action_workspace(
     "lower-local-action-nested-builtin",
