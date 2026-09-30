@@ -474,6 +474,42 @@ test "self repository detection: a workflow without $/ does not use the self rep
 }
 
 ///|
+test "self repository detection: stops on reusable workflows that call each other" {
+  let workspace = prepare_local_action_workspace("self-repo-detect-cycle")
+  test_ensure_dir(workspace + "/.github")
+  test_ensure_dir(workspace + "/.github/workflows")
+  let callee_src =
+    #|name: NAME
+    #|on: workflow_call
+    #|jobs:
+    #|  call:
+    #|    uses: ./.github/workflows/OTHER.yml
+  @xfs.write_string_to_file(
+    workspace + "/.github/workflows/a.yml",
+    callee_src.replace(old="NAME", new="a").replace(old="OTHER", new="b"),
+  )
+  @xfs.write_string_to_file(
+    workspace + "/.github/workflows/b.yml",
+    callee_src.replace(old="NAME", new="b").replace(old="OTHER", new="a"),
+  )
+  let workflow = expect_workflow(
+    parse_workflow_yaml(
+      (
+        #|name: ci
+        #|on: push
+        #|jobs:
+        #|  call:
+        #|    uses: ./.github/workflows/a.yml
+      ),
+    ),
+  )
+  @debug.debug_inspect(
+    workflow_uses_self_repository(workflow, workspace),
+    content="false",
+  )
+}
+
+///|
 test "lowering: a self-repository action whose name starts with two dots is lowered" {
   let workspace = prepare_local_action_workspace("lower-self-repo-dot-dot-name")
   test_ensure_dir(workspace + "/..hidden")

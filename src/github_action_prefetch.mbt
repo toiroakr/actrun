@@ -493,7 +493,15 @@ pub fn workflow_uses_self_repository(
   workflow : WorkflowSpec,
   workspace_root : String,
 ) -> Bool {
-  let visited : Map[String, Bool] = Map([])
+  jobs_use_self_repository(workflow, workspace_root, Map([]))
+}
+
+///|
+fn jobs_use_self_repository(
+  workflow : WorkflowSpec,
+  workspace_root : String,
+  visited : Map[String, Bool],
+) -> Bool {
   for job in workflow.jobs {
     if steps_use_self_repository(job.steps, workspace_root, ".", visited) {
       return true
@@ -513,7 +521,7 @@ pub fn workflow_uses_self_repository(
       parse_workflow_yaml(text).workflow is Some(callee) else {
       continue
     }
-    if workflow_uses_self_repository(callee, workspace_root) {
+    if jobs_use_self_repository(callee, workspace_root, visited) {
       return true
     }
   }
