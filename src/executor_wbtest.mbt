@@ -402,3 +402,20 @@ async test "resolve_real_path: returns path for non-existent path" {
     ),
   )
 }
+
+///|
+async test "write_setup_node_shim: a bare node command is exec'd by absolute path so the shim cannot resolve to itself" {
+  let workspace = wbtest_setup_tmpdir()
+  guard write_setup_node_shim(workspace, "build/setup", "sh", "v20.0.0")
+    is Some(shim_dir) else {
+    fail("shim was not written")
+  }
+  let script = @xfs.read_file_to_string(shim_dir + "/node")
+  let exec_line = script
+    .split("\n")
+    .filter(line => line.has_prefix("exec "))
+    .map(line => line.to_string())
+    .collect()
+  assert_true(exec_line.length() == 1 && exec_line[0].has_prefix("exec '/"))
+  wbtest_cleanup(workspace)
+}

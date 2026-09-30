@@ -142,6 +142,24 @@ async fn exec_make_executable(path : String) -> Bool {
 }
 
 ///|
+fn resolve_command_on_path(command : String) -> String {
+  if command.contains("/") {
+    return command
+  }
+  let path = @env.get_env_var("PATH").unwrap_or("")
+  for dir in path.split(":") {
+    if dir.length() == 0 {
+      continue
+    }
+    let candidate = dir.to_string() + "/" + command
+    if @xfs.path_exists(candidate) {
+      return candidate
+    }
+  }
+  command
+}
+
+///|
 async fn write_setup_node_shim(
   workspace_root : String,
   task_id : String,
@@ -170,7 +188,7 @@ async fn write_setup_node_shim(
     "  exit 0\n" +
     "fi\n" +
     "exec '" +
-    node_bin.replace_all(old="'", new="'\"'\"'") +
+    resolve_command_on_path(node_bin).replace_all(old="'", new="'\"'\"'") +
     "' \"" +
     d +
     "@\"\n"
