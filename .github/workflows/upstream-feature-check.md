@@ -10,7 +10,7 @@ on:
 permissions:
   contents: read
   pull-requests: read
-engine: claude
+engine: copilot
 timeout-minutes: 30
 network:
   allowed:
