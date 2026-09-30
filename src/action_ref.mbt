@@ -129,6 +129,8 @@ fn self_repository_local_path(uses : String) -> Result[String, String] {
     Err("must include a path after $/")
   } else if path.contains("@") {
     Err("must not include @ref: $/ always resolves to the running commit")
+  } else if normalize_local_action_path(path).has_prefix("..") {
+    Err("must stay within the repository")
   } else {
     Ok("./" + path)
   }

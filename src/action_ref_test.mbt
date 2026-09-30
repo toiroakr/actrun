@@ -343,3 +343,15 @@ test "action ref: self-repository ref rejects an empty path" {
     ),
   )
 }
+
+///|
+test "action ref: self-repository ref rejects a path that escapes the repository" {
+  let result = parse_action_ref("$/greet/../../outside")
+
+  @debug.debug_inspect(
+    result.errors,
+    content=(
+      #|["action ref '$/greet/../../outside' must stay within the repository"]
+    ),
+  )
+}
