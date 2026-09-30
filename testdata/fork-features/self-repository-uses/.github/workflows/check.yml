@@ -1,0 +1,9 @@
+name: self-repository-uses
+on: push
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: $/greet
+      - uses: ./.github/actions/wrap
+      - run: test "$(grep -c greeted greet.log)" = 2

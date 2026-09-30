@@ -1,0 +1,10 @@
+name: composite-if-inputs
+on: push
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./gate
+        with:
+          mode: "on"
+      - run: test "$(cat gate.log)" = on

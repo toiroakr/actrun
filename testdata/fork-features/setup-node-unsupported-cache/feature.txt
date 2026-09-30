@@ -1,0 +1,3 @@
+id=setup-node-unsupported-cache
+commit=fix: skip unsupported setup-node cache managers instead of failing
+summary=builtin setup-node with `cache: pnpm` succeeds (without a dependency cache) instead of failing the job

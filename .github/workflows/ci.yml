@@ -186,3 +186,5 @@ jobs:
         run: moon build src/cmd/actrun --target native
       - name: Run E2E scenarios
         run: just e2e
+      - name: Check fork-only features
+        run: bash scripts/fork_features_check.sh "$PWD/_build/native/debug/build/cmd/actrun/actrun.exe"

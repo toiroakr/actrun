@@ -1,0 +1,6 @@
+name: Greet
+runs:
+  using: composite
+  steps:
+    - run: echo greeted >> "$GITHUB_WORKSPACE/greet.log"
+      shell: bash

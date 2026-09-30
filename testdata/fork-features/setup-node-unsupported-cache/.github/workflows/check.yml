@@ -1,0 +1,11 @@
+name: setup-node-unsupported-cache
+on: push
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - id: setup
+        uses: actions/setup-node@v4
+        with:
+          cache: pnpm
+      - run: test "${{ steps.setup.outcome }}" = success

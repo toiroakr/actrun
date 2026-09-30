@@ -1,0 +1,13 @@
+name: composite-continue-on-error
+on: push
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - id: fail
+        uses: ./fail
+        continue-on-error: true
+      - run: |
+          test "${{ steps.fail.outcome }}" = failure
+          test "${{ steps.fail.conclusion }}" = success
+          test ! -e after.log
