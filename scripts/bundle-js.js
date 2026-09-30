@@ -70,11 +70,19 @@ const libInputs = [
 ];
 libInputs.hint = 'moon build --release src --target js';
 
+// npx and global installs run dist/actrun.js outside <cwd>/node_modules, so
+// point the WASM runners at the shim shipped next to it.
+const CLI_SHIM_PRELUDE = [
+  "import { fileURLToPath as __actrunFileURLToPath } from 'node:url';",
+  "process.env.ACTRUN_WASI_RUNNER_SHIM ||= __actrunFileURLToPath(new URL('../scripts/wasi-runner.mjs', import.meta.url));",
+  '',
+].join('\n');
+
 const okCli = bundle({
   label: 'cli',
   inputs: cliInputs,
   output: path.join(root, 'dist', 'actrun.js'),
-  prelude: ESM_REQUIRE_PRELUDE,
+  prelude: ESM_REQUIRE_PRELUDE + CLI_SHIM_PRELUDE,
   shebang: '#!/usr/bin/env node\n',
   executable: true,
   minify: true,

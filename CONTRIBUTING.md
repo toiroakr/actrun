@@ -2,6 +2,8 @@
 
 Thank you for your interest in contributing to actrun!
 
+> In this fork, the npm package is `@toiroakr/actrun` and releases go through changesets and npm trusted publishing instead of the `NPM_TOKEN` flow below; see [testdata/fork-features/README.md](testdata/fork-features/README.md). The changesets CLI needs Node.js 22.11+.
+
 ## Getting Started
 
 ### Prerequisites
