@@ -3322,6 +3322,93 @@ async test "lowering: remote reusable workflow local action is resolved from cac
 
 ///|
 #cfg(target="native")
+async test "lowering: self-repository uses nested in a remote reusable workflow resolves from the cached repo" {
+  let workspace = prepare_local_action_workspace(
+    "reusable-workflow-remote-self-repository",
+  )
+  let remote_repo = workspace + "/remote_repo"
+  for
+    dir in [
+      "", "/.github", "/.github/workflows", "/.github/actions", "/.github/actions/wrap",
+      "/greet",
+    ] {
+    test_ensure_dir(remote_repo + dir)
+  }
+  test_ensure_dir(workspace + "/greet")
+  let reusable_src =
+    #|name: reusable
+    #|on: workflow_call
+    #|jobs:
+    #|  build:
+    #|    runs-on: ubuntu-latest
+    #|    steps:
+    #|      - id: wrap
+    #|        uses: $/.github/actions/wrap
+  let wrap_src =
+    #|name: wrap
+    #|runs:
+    #|  using: composite
+    #|  steps:
+    #|    - id: greet
+    #|      uses: $/greet
+  let greet_src =
+    #|name: greet
+    #|runs:
+    #|  using: composite
+    #|  steps:
+    #|    - id: write
+    #|      run: echo WHO-greet
+    #|      shell: bash
+  @xfs.write_string_to_file(
+    remote_repo + "/.github/workflows/reusable.yml",
+    reusable_src,
+  )
+  @xfs.write_string_to_file(
+    remote_repo + "/.github/actions/wrap/action.yml",
+    wrap_src,
+  )
+  @xfs.write_string_to_file(
+    remote_repo + "/greet/action.yml",
+    greet_src.replace(old="WHO", new="remote"),
+  )
+  @xfs.write_string_to_file(
+    workspace + "/greet/action.yml",
+    greet_src.replace(old="WHO", new="caller"),
+  )
+  let caller_src =
+    #|name: caller
+    #|on: push
+    #|jobs:
+    #|  call:
+    #|    uses: demo/self-repo-tools/.github/workflows/reusable.yml@v1
+  let workflow = parse_workflow_yaml(caller_src).workflow.unwrap()
+  let log_path = workspace + "/git.log"
+  test_support_remove_tree(
+    "_build/actrun/github_actions/demo/self-repo-tools/v1",
+  )
+  let git_path = test_support_prepare_fake_git_bin_from_source(
+    workspace, remote_repo, log_path,
+  )
+  let prefetch = prefetch_workflow_github_actions_native(
+    workflow,
+    workspace,
+    git_bin=Some(git_path),
+  )
+  let result = lower_push_workflow_in_workspace(workflow, workspace)
+
+  @debug.debug_inspect(prefetch.errors, content="[]")
+  @debug.debug_inspect(result.errors, content="[]")
+  let write = expect_task_plan(result.plan, "call__build/wrap__greet__write")
+  @debug.debug_inspect(
+    write.script,
+    content=(
+      #|"echo remote-greet"
+    ),
+  )
+}
+
+///|
+#cfg(target="native")
 async test "prefetch: SHA-pinned action uses git init+fetch+checkout instead of clone" {
   let workspace = prepare_local_action_workspace("prefetch-sha-pinning")
   let sha = "abc1234def5678abc1234def5678abc1234def56"

@@ -252,6 +252,29 @@ fn action_registry_root() -> String {
 }
 
 ///|
+fn cached_repo_root_of_local_path(
+  workspace_root : String,
+  path : String,
+) -> String? {
+  let cache_root = normalize_local_action_path(github_action_cache_root())
+  let target = normalize_local_action_path(
+    absolute_lowering_path(join_path(workspace_root, path)),
+  )
+  guard target.has_prefix(cache_root + "/") else { None }
+  let segments = text_slice(target, cache_root.length() + 1, target.length()).split(
+    "/",
+  )
+  let parts = segments.map(part => part.to_string()).collect()
+  if parts.length() < 3 {
+    None
+  } else {
+    Some(
+      join_path(join_path(join_path(cache_root, parts[0]), parts[1]), parts[2]),
+    )
+  }
+}
+
+///|
 priv struct GitHubActionCacheLayout {
   uses : String
   owner : String
@@ -3098,6 +3121,9 @@ pub fn lower_push_workflow_in_workspace(
               errors,
               composite_output_mappings~,
               composite_steps~,
+              self_repository_root=cached_repo_root_of_local_path(
+                workspace_root, path,
+              ).unwrap_or("."),
             )
             step_index += 1
             continue
