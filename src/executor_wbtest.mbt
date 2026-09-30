@@ -455,3 +455,31 @@ async test "write_setup_node_shim: the PATH lookup skips entries that are not ex
   assert_true(script.contains("exec '" + workspace + "/real/node'"))
   wbtest_cleanup(workspace)
 }
+
+///|
+async test "write_setup_node_shim: a node found through a relative PATH entry is exec'd by absolute path" {
+  let workspace = wbtest_setup_tmpdir()
+  let relative_bin = "_build/wbtest-relative-path-bin"
+  let _ = wbtest_run("mkdir", ["-p", relative_bin])
+  let _ = wbtest_run("sh", [
+    "-c",
+    "printf '#!/bin/sh\\n' > " +
+    relative_bin +
+    "/node && chmod +x " +
+    relative_bin +
+    "/node",
+  ])
+  let original_path = @env.get_env_var("PATH").unwrap_or("")
+  @env.set_env_var("PATH", relative_bin + ":" + original_path)
+  let shim_dir = write_setup_node_shim(
+    workspace, "build/setup", "node", "v20.0.0",
+  )
+  @env.set_env_var("PATH", original_path)
+  let _ = wbtest_run("rm", ["-rf", relative_bin])
+  guard shim_dir is Some(dir) else { fail("shim was not written") }
+  let script = @xfs.read_file_to_string(dir + "/node")
+  assert_true(
+    script.contains("exec '/") && script.contains("/" + relative_bin + "/node'"),
+  )
+  wbtest_cleanup(workspace)
+}

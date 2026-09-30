@@ -148,7 +148,10 @@ async fn resolve_command_on_path(command : String) -> String {
   }
   let (code, stdout, _) = run_command(
     "sh",
-    ["-c", "command -v -- \"$1\"", "sh", command],
+    [
+      "-c", "p=$(command -v -- \"$1\") || exit 1; case $p in /*) ;; */*) p=\"$PWD/$p\" ;; esac; printf '%s' \"$p\"",
+      "sh", command,
+    ],
     cwd=".",
   )
   let resolved = stdout.trim(chars=" \t\r\n").to_owned()
