@@ -331,3 +331,15 @@ test "action ref: self-repository ref rejects an explicit version" {
     ),
   )
 }
+
+///|
+test "action ref: self-repository ref rejects an empty path" {
+  let result = parse_action_ref("$/")
+
+  @debug.debug_inspect(
+    result.errors,
+    content=(
+      #|["action ref '$/' must include a path after $/"]
+    ),
+  )
+}

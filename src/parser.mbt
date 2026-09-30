@@ -1534,9 +1534,9 @@ fn normalize_self_repository_uses(
 ) -> String? {
   guard uses is Some(text) && is_self_repository_uses(text) else { uses }
   match self_repository_local_path(text) {
-    Some(path) => Some(path)
-    None => {
-      errors.push(ctx + " '\{text}' " + SelfRepositoryRefError)
+    Ok(path) => Some(path)
+    Err(message) => {
+      errors.push(ctx + " '\{text}' " + message)
       uses
     }
   }
