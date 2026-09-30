@@ -285,8 +285,9 @@ fn apply_composite_output_mappings(
   step_id : String,
   mappings : Map[String, Map[String, String]],
   absorbs_failure? : (String) -> Bool = _ => false,
+  is_composite? : (String) -> Bool = _ => false,
 ) -> JobRuntimeState {
-  let ancestors = composite_ancestor_step_ids(step_id)
+  let ancestors = composite_ancestor_step_ids(step_id, is_composite)
   if ancestors.length() == 0 {
     return state
   }
@@ -2196,12 +2197,33 @@ fn job_if_cancelled_value(needs_results : Map[String, String]) -> Bool {
 }
 
 ///|
-fn composite_parent_step_id(step_id : String) -> String? {
+priv struct StepScope {
+  step_id : String
+  is_composite : (String) -> Bool
+}
+
+///|
+fn plan_step_scope(plan : ExecutionPlan, task : TaskPlan) -> StepScope {
+  let job_prefix = task.job_id + "/"
+  {
+    step_id: task.step_id,
+    is_composite: step_id => plan.composite_steps.contains(job_prefix + step_id),
+  }
+}
+
+///|
+fn composite_parent_step_id(
+  step_id : String,
+  is_composite : (String) -> Bool,
+) -> String? {
   let mut idx = step_id.length() - 1
   while idx > 1 {
     if step_id.unsafe_get(idx - 1) == '_'.to_int().to_uint16() &&
       step_id.unsafe_get(idx) == '_'.to_int().to_uint16() {
-      return Some(exec_text_slice(step_id, 0, idx - 1))
+      let prefix = exec_text_slice(step_id, 0, idx - 1)
+      if is_composite(prefix) {
+        return Some(prefix)
+      }
     }
     idx -= 1
   }
@@ -2209,10 +2231,13 @@ fn composite_parent_step_id(step_id : String) -> String? {
 }
 
 ///|
-fn composite_ancestor_step_ids(step_id : String) -> Array[String] {
+fn composite_ancestor_step_ids(
+  step_id : String,
+  is_composite : (String) -> Bool,
+) -> Array[String] {
   let ancestors : Array[String] = []
   let mut current = step_id
-  while composite_parent_step_id(current) is Some(parent) {
+  while composite_parent_step_id(current, is_composite) is Some(parent) {
     ancestors.push(parent)
     current = parent
   }
@@ -2220,13 +2245,13 @@ fn composite_ancestor_step_ids(step_id : String) -> Array[String] {
 }
 
 ///|
-fn step_conclusion_visible(key : String, scope : String?) -> Bool {
-  guard scope is Some(current) else { return true }
+fn step_conclusion_visible(key : String, scope : StepScope?) -> Bool {
+  guard scope is Some(scope) else { return true }
   if key.has_suffix("__post") {
     return true
   }
-  match composite_parent_step_id(key) {
-    Some(parent) => current.has_prefix(parent + "__")
+  match composite_parent_step_id(key, scope.is_composite) {
+    Some(parent) => scope.step_id.has_prefix(parent + "__")
     None => true
   }
 }
@@ -2234,7 +2259,7 @@ fn step_conclusion_visible(key : String, scope : String?) -> Bool {
 ///|
 fn step_if_success_value(
   state : JobRuntimeState,
-  scope? : String? = None,
+  scope? : StepScope? = None,
 ) -> Bool {
   for key, value in state.step_conclusions {
     if (value == "failure" || value == "cancelled") &&
@@ -2248,7 +2273,7 @@ fn step_if_success_value(
 ///|
 fn step_if_failure_value(
   state : JobRuntimeState,
-  scope? : String? = None,
+  scope? : StepScope? = None,
 ) -> Bool {
   for key, value in state.step_conclusions {
     if value == "failure" && step_conclusion_visible(key, scope) {
@@ -2261,7 +2286,7 @@ fn step_if_failure_value(
 ///|
 fn step_if_cancelled_value(
   state : JobRuntimeState,
-  scope? : String? = None,
+  scope? : StepScope? = None,
 ) -> Bool {
   for key, value in state.step_conclusions {
     if value == "cancelled" && step_conclusion_visible(key, scope) {
@@ -3834,6 +3859,7 @@ async fn dump_plan_step_context_json(
   secret_values : Array[String],
 ) -> Json {
   let state = empty_job_runtime_state()
+  let step_scope = plan_step_scope(execution_plan, plan)
   let needs_outputs = job_needs_outputs(execution_plan, plan.job_id, {})
   let needs_results = job_needs_results(execution_plan, plan.job_id, {})
   let github_ctx = github_context(
@@ -3890,9 +3916,9 @@ async fn dump_plan_step_context_json(
       runner_context=runner_ctx,
       needs_outputs~,
       needs_results~,
-      success_value=step_if_success_value(state, scope=Some(plan.step_id)),
-      failure_value=step_if_failure_value(state, scope=Some(plan.step_id)),
-      cancelled_value=step_if_cancelled_value(state, scope=Some(plan.step_id)),
+      success_value=step_if_success_value(state, scope=Some(step_scope)),
+      failure_value=step_if_failure_value(state, scope=Some(step_scope)),
+      cancelled_value=step_if_cancelled_value(state, scope=Some(step_scope)),
     ),
   )
   let runner_env = default_runner_env(
@@ -4417,6 +4443,7 @@ pub async fn execute_lowered_native(
         }
         let step_should_run = match plan_opt {
           Some(plan) if !is_barrier => {
+            let step_scope = plan_step_scope(lowered.plan, plan)
             let github_ctx = github_context(
               ir.name,
               plan,
@@ -4430,6 +4457,51 @@ pub async fn execute_lowered_native(
             )
             let vars_ctx = runner_vars_context()
             let runner_ctx = runner_context(plan, workspace_root)
+            for
+              outer_step_id in composite_ancestor_step_ids(
+                plan.step_id,
+                step_scope.is_composite,
+              ) {
+              let key = plan.job_id + "/" + outer_step_id
+              guard lowered.plan.composite_steps.get(key) is Some(composite) &&
+                composite_continue_on_error_values.get(key) is None else {
+                continue
+              }
+              let outer_scope = { ..step_scope, step_id: outer_step_id, }
+              let outer_env = merge_runner_env(
+                composite.env,
+                current_state.env_updates,
+              )
+              outer_env["ACTRUN_LOCAL"] = "true"
+              composite_continue_on_error_values[key] = evaluate_boolean_condition(
+                composite.continue_on_error,
+                new_if_condition_context(
+                  step_outputs=current_state.step_outputs,
+                  step_outcomes=current_state.step_outcomes,
+                  step_conclusions=current_state.step_conclusions,
+                  workspace_root~,
+                  env_context=outer_env,
+                  job_context=job_ctx,
+                  vars_context=vars_ctx,
+                  github_context=github_ctx,
+                  runner_context=runner_ctx,
+                  needs_outputs~,
+                  needs_results~,
+                  success_value=step_if_success_value(
+                    current_state,
+                    scope=Some(outer_scope),
+                  ),
+                  failure_value=step_if_failure_value(
+                    current_state,
+                    scope=Some(outer_scope),
+                  ),
+                  cancelled_value=step_if_cancelled_value(
+                    current_state,
+                    scope=Some(outer_scope),
+                  ),
+                ),
+              )
+            }
             let step_env = merge_runner_env(plan.env, current_state.env_updates)
             step_env["ACTRUN_LOCAL"] = "true"
             evaluate_if_condition(
@@ -4448,15 +4520,15 @@ pub async fn execute_lowered_native(
                 needs_results~,
                 success_value=step_if_success_value(
                   current_state,
-                  scope=Some(plan.step_id),
+                  scope=Some(step_scope),
                 ),
                 failure_value=step_if_failure_value(
                   current_state,
-                  scope=Some(plan.step_id),
+                  scope=Some(step_scope),
                 ),
                 cancelled_value=step_if_cancelled_value(
                   current_state,
-                  scope=Some(plan.step_id),
+                  scope=Some(step_scope),
                 ),
               ),
             )
@@ -4640,6 +4712,7 @@ pub async fn execute_lowered_native(
                 lowered.plan.job_services,
                 plan.job_id,
               )
+              let step_scope = plan_step_scope(lowered.plan, plan)
               let condition_context = new_if_condition_context(
                 step_outputs=current_state.step_outputs,
                 step_outcomes=current_state.step_outcomes,
@@ -4657,15 +4730,15 @@ pub async fn execute_lowered_native(
                 needs_results~,
                 success_value=step_if_success_value(
                   current_state,
-                  scope=Some(plan.step_id),
+                  scope=Some(step_scope),
                 ),
                 failure_value=step_if_failure_value(
                   current_state,
-                  scope=Some(plan.step_id),
+                  scope=Some(step_scope),
                 ),
                 cancelled_value=step_if_cancelled_value(
                   current_state,
-                  scope=Some(plan.step_id),
+                  scope=Some(step_scope),
                 ),
               )
               let continue_on_error = plan.kind != "barrier" &&
@@ -4674,18 +4747,9 @@ pub async fn execute_lowered_native(
                   condition_context,
                 )
               let composite_absorbs_failure = fn(outer_step_id : String) {
-                let key = plan.job_id + "/" + outer_step_id
-                if composite_continue_on_error_values.get(key) is Some(value) {
-                  return value
-                }
-                let value = match
-                  lowered.plan.composite_continue_on_error.get(key) {
-                  Some(expr) =>
-                    evaluate_boolean_condition(expr, condition_context)
-                  None => false
-                }
-                composite_continue_on_error_values[key] = value
-                value
+                composite_continue_on_error_values
+                .get(plan.job_id + "/" + outer_step_id)
+                .unwrap_or(false)
               }
               let outcome = task_outcome(report)
               let conclusion = task_conclusion(outcome, continue_on_error)
@@ -4705,6 +4769,7 @@ pub async fn execute_lowered_native(
                 plan.step_id,
                 lowered.plan.composite_output_mappings,
                 absorbs_failure=composite_absorbs_failure,
+                is_composite=step_scope.is_composite,
               )
               job_states[plan.job_id] = next_state
               if conclusion == "success" {
@@ -4789,9 +4854,10 @@ pub async fn execute_lowered_native(
                   duration_ms: report.duration_ms,
                   message,
                 })
-                let absorbed = composite_ancestor_step_ids(plan.step_id).any(
-                  composite_absorbs_failure,
-                )
+                let absorbed = composite_ancestor_step_ids(
+                  plan.step_id,
+                  step_scope.is_composite,
+                ).any(composite_absorbs_failure)
                 success[task.id] = absorbed ||
                   task_conclusion_allows_dependents(conclusion)
                 if task.required && !absorbed {

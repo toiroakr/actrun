@@ -2158,7 +2158,7 @@ fn lower_manifest_backed_action(
   deferred_post_tasks : Array[DeferredActionTask],
   errors : Array[String],
   composite_output_mappings? : Map[String, Map[String, String]] = Map([]),
-  composite_continue_on_error? : Map[String, String] = Map([]),
+  composite_steps? : Map[String, CompositeStepPlan] = Map([]),
 ) -> String {
   guard find_local_action_manifest(workspace_root, cached_root)
     is Some((_, manifest_text)) else {
@@ -2194,7 +2194,7 @@ fn lower_manifest_backed_action(
       errors,
       action_context_env~,
       composite_output_mappings~,
-      composite_continue_on_error~,
+      composite_steps~,
       self_repository_root=match github_action_cache_layout(action_ref) {
         Some(layout) => layout.repo_root
         None => cached_root
@@ -2523,7 +2523,7 @@ fn lower_local_action(
   errors : Array[String],
   action_context_env? : Map[String, String] = Map([]),
   composite_output_mappings? : Map[String, Map[String, String]] = Map([]),
-  composite_continue_on_error? : Map[String, String] = Map([]),
+  composite_steps? : Map[String, CompositeStepPlan] = Map([]),
   self_repository_root? : String = ".",
 ) -> String {
   if workspace_root.length() == 0 {
@@ -2572,10 +2572,13 @@ fn lower_local_action(
       deferred_post_tasks,
       errors,
       composite_output_mappings~,
-      composite_continue_on_error~,
+      composite_steps~,
     )
   }
-  composite_continue_on_error[job.id + "/" + outer_step_id] = outer_step.continue_on_error
+  composite_steps[job.id + "/" + outer_step_id] = {
+    continue_on_error: outer_step.continue_on_error,
+    env: merge_env(job_env, outer_step.env),
+  }
   let action = new_local_action(
     action_manifest.steps,
     name=action_manifest.name,
@@ -2666,7 +2669,7 @@ fn lower_local_action(
             errors,
             action_context_env~,
             composite_output_mappings~,
-            composite_continue_on_error~,
+            composite_steps~,
             self_repository_root~,
           )
           inner_index += 1
@@ -2730,7 +2733,7 @@ fn lower_local_action(
           deferred_post_tasks,
           errors,
           composite_output_mappings~,
-          composite_continue_on_error~,
+          composite_steps~,
         )
         inner_index += 1
         continue
@@ -2921,7 +2924,7 @@ pub fn lower_push_workflow_in_workspace(
   let job_containers : Map[String, JobContainerSpec] = Map([])
   let job_services : Map[String, Map[String, JobContainerSpec]] = Map([])
   let composite_output_mappings : Map[String, Map[String, String]] = Map([])
-  let composite_continue_on_error : Map[String, String] = Map([])
+  let composite_steps : Map[String, CompositeStepPlan] = Map([])
   let entry_targets : Array[String] = []
   let seen_jobs : Map[String, Bool] = Map([])
   if workflow.workflow_call {
@@ -3073,7 +3076,7 @@ pub fn lower_push_workflow_in_workspace(
               deferred_post_tasks,
               errors,
               composite_output_mappings~,
-              composite_continue_on_error~,
+              composite_steps~,
             )
             step_index += 1
             continue
@@ -3119,7 +3122,7 @@ pub fn lower_push_workflow_in_workspace(
             deferred_post_tasks,
             errors,
             composite_output_mappings~,
-            composite_continue_on_error~,
+            composite_steps~,
           )
           step_index += 1
           continue
@@ -3217,7 +3220,7 @@ pub fn lower_push_workflow_in_workspace(
       job_containers,
       job_services,
       composite_output_mappings,
-      composite_continue_on_error,
+      composite_steps,
     },
     errors,
   }

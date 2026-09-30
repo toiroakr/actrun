@@ -3837,6 +3837,79 @@ async test "executor: continue-on-error on a composite step is evaluated once, n
 }
 
 ///|
+#cfg(target="native")
+async test "executor: a step whose id contains __ does not overwrite the outcome of a step named by its prefix" {
+  let workspace = prepare_workspace("executor-double-underscore-step-id")
+  let workflow = new_workflow("ci", [
+    new_job(
+      "build",
+      [
+        new_run_step("deploy", "echo deployed"),
+        new_run_step("deploy__prod", "exit 1"),
+        new_run_step(
+          "check",
+          "printf '%s' \"${{ steps.deploy.outcome }}\"",
+          if_condition="always()",
+        ),
+      ],
+      defaults=new_run_defaults(shell=Some("sh")),
+    ),
+  ])
+  let lowered = lower_push_workflow_in_workspace(workflow, workspace)
+  let report = execute_lowered_native(lowered, workspace_root=workspace)
+
+  @debug.debug_inspect(
+    expect_task_report(report, "build/check").stdout,
+    content=(
+      #|"success"
+    ),
+  )
+}
+
+///|
+#cfg(target="native")
+async test "executor: continue-on-error on a composite step is evaluated in the outer step's environment" {
+  let workspace = prepare_workspace("executor-composite-coe-outer-env")
+  ensure_dir(workspace + "/setup")
+  let action_src =
+    #|name: Setup
+    #|runs:
+    #|  using: composite
+    #|  steps:
+    #|    - id: fail
+    #|      run: exit 1
+    #|      shell: sh
+    #|      env:
+    #|        SOFT_FAIL: "false"
+  @xfs.write_string_to_file(workspace + "/setup/action.yml", action_src)
+  let workflow = new_workflow("ci", [
+    new_job(
+      "build",
+      [
+        new_uses_step(
+          "setup",
+          "./setup",
+          env={ "SOFT_FAIL": "true" },
+          continue_on_error="${{ env.SOFT_FAIL == 'true' }}",
+        ),
+        new_run_step("verify", "echo verified"),
+      ],
+      defaults=new_run_defaults(shell=Some("sh")),
+    ),
+  ])
+  let lowered = lower_push_workflow_in_workspace(workflow, workspace)
+  let report = execute_lowered_native(lowered, workspace_root=workspace)
+
+  @debug.debug_inspect(report.ok, content="true")
+  @debug.debug_inspect(
+    expect_task_report(report, "build/verify").status,
+    content=(
+      #|"success"
+    ),
+  )
+}
+
+///|
 let wrapping_composite_src : String =
   #|name: Wrap
   #|runs:
