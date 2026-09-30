@@ -142,6 +142,41 @@ async fn exec_make_executable(path : String) -> Bool {
 }
 
 ///|
+async fn resolve_command_on_path(
+  command : String,
+  search_path? : String? = None,
+  cwd? : String = ".",
+) -> String {
+  if command.has_prefix("/") {
+    return command
+  }
+  if command.contains("/") {
+    let (code, stdout, _) = run_command(
+      "sh",
+      ["-c", "printf '%s/%s' \"$PWD\" \"${1#./}\"", "sh", command],
+      cwd=".",
+    )
+    return if code == 0 { stdout } else { command }
+  }
+  let script = "p=$(command -v -- \"$1\") || exit 1; case $p in /*) ;; */*) p=\"$PWD/$p\" ;; esac; printf '%s' \"$p\""
+  let (code, stdout, _) = match search_path {
+    Some(path) =>
+      run_command(
+        "env",
+        ["PATH=" + path, "/bin/sh", "-c", script, "sh", command],
+        cwd~,
+      )
+    None => run_command("sh", ["-c", script, "sh", command], cwd~)
+  }
+  let resolved = stdout.trim(chars=" \t\r\n").to_owned()
+  if code == 0 && resolved.has_prefix("/") {
+    resolved
+  } else {
+    command
+  }
+}
+
+///|
 async fn write_setup_node_shim(
   workspace_root : String,
   task_id : String,
@@ -157,6 +192,10 @@ async fn write_setup_node_shim(
   }
   let shim_path = shim_dir + "/node"
   let d = "$"
+  let node_path = resolve_command_on_path(
+    node_bin,
+    cwd=resolve_task_cwd(workspace_root, ""),
+  )
   let script = "#!/bin/sh\n" +
     "set -eu\n" +
     "if [ \"" +
@@ -170,7 +209,7 @@ async fn write_setup_node_shim(
     "  exit 0\n" +
     "fi\n" +
     "exec '" +
-    node_bin.replace_all(old="'", new="'\"'\"'") +
+    node_path.replace_all(old="'", new="'\"'\"'") +
     "' \"" +
     d +
     "@\"\n"
@@ -400,14 +439,13 @@ async fn execute_setup_node_native(
     output_values["node-architecture"] = architecture_input
   }
   let state_updates : Map[String, String] = Map([])
-  if normalized_cache_input.length() > 0 {
-    if normalized_cache_input != "npm" {
-      return failure_execution_result(
-        plan,
-        workspace_root,
-        "setup-node cache '\{normalized_cache_input}' is not supported yet",
-      )
-    }
+  let mut warning = ""
+  if normalized_cache_input.length() > 0 && normalized_cache_input != "npm" {
+    // A cache miss never changes a step's outcome on GitHub either, so an
+    // unsupported package manager degrades to "no cache" instead of failing.
+    warning = "warning: setup-node cache '\{normalized_cache_input}' is not supported yet; continuing without a dependency cache"
+    output_values["cache-hit"] = "false"
+  } else if normalized_cache_input.length() > 0 {
     let dependency_input = resolved_plan_env
       .get("INPUT_CACHE_DEPENDENCY_PATH")
       .unwrap_or("")
@@ -482,7 +520,7 @@ async fn execute_setup_node_native(
     env_updates["NODE_AUTH_TOKEN"] = node_auth_token
   }
   {
-    report: task_report_success(plan, workspace_root),
+    report: { ..task_report_success(plan, workspace_root), stderr: warning, },
     env_updates,
     path_entries: [shim_dir],
     output_values,

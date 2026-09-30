@@ -206,6 +206,12 @@ fn rewrite_reusable_step_local_uses(
   source_root : String,
   execution_root : String,
 ) -> StepSpec {
+  if step.uses is Some(uses) &&
+    is_self_repository_uses(uses) &&
+    normalize_local_action_path(absolute_lowering_path(source_root)) ==
+    normalize_local_action_path(absolute_lowering_path(execution_root)) {
+    return step
+  }
   match step.uses {
     Some(uses) =>
       match parse_action_ref(uses).action {
@@ -431,11 +437,56 @@ fn substitute_matrix_refs_in_expr(
   expression : String,
   matrix_values : Map[String, String],
 ) -> String {
-  let prefix = "matrix."
+  substitute_context_refs_in_expr(expression, "matrix.", matrix_values)
+}
+
+///|
+fn is_context_ref_continuation(expression : String, pos : Int) -> Bool {
+  let c = expression.unsafe_get(pos)
+  is_matrix_ident_code(c) || c == '.'.to_int().to_uint16()
+}
+
+///|
+fn whole_expression_body(value : String) -> String? {
+  let trimmed = value.trim(chars=" \t\r\n").to_owned()
+  let open = "$\u{7b}\u{7b}"
+  guard trimmed.has_prefix(open) && trimmed.has_suffix("}}") else { None }
+  let body = text_slice(trimmed, open.length(), trimmed.length() - 2)
+  if body.contains(open) || body.contains("}}") {
+    None
+  } else {
+    Some(body.trim(chars=" \t\r\n").to_owned())
+  }
+}
+
+///|
+fn is_inside_expr_string_literal(expression : String, pos : Int) -> Bool {
+  let quote = '\''.to_int().to_uint16()
+  let mut quotes = 0
+  for idx in 0..<pos {
+    if expression.unsafe_get(idx) == quote {
+      quotes += 1
+    }
+  }
+  quotes % 2 == 1
+}
+
+///|
+fn substitute_context_refs_in_expr(
+  expression : String,
+  prefix : String,
+  values : Map[String, String],
+  expand_expression_values? : Bool = false,
+) -> String {
   let chunks : Array[String] = []
   let mut idx = 0
   while idx < expression.length() {
     match find_substring(expression, prefix, idx) {
+      Some(pos) if (pos > 0 && is_context_ref_continuation(expression, pos - 1)) ||
+        is_inside_expr_string_literal(expression, pos) => {
+        chunks.push(text_slice(expression, idx, pos + prefix.length()))
+        idx = pos + prefix.length()
+      }
       Some(pos) => {
         chunks.push(text_slice(expression, idx, pos))
         let key_start = pos + prefix.length()
@@ -446,11 +497,21 @@ fn substitute_matrix_refs_in_expr(
         }
         if key_end > key_start {
           let key = text_slice(expression, key_start, key_end)
-          let value = matrix_values.get(key).unwrap_or("")
-          // Quote the value as a string literal to prevent expression injection.
-          // e.g., matrix value "'true' || always()" becomes the safe literal
-          // "'\'true\' || always()'" instead of raw injection into the expression.
-          chunks.push(quote_expr_string_literal(value))
+          let value = values.get(key).unwrap_or("")
+          match whole_expression_body(value) {
+            Some(body) if expand_expression_values =>
+              chunks.push("(" + body + ")")
+            _ if expand_expression_values && value.contains("$\u{7b}\u{7b}") =>
+              chunks.push(
+                mixed_expression_format_call(value).unwrap_or(
+                  text_slice(expression, pos, key_end),
+                ),
+              )
+            // Quote the value as a string literal to prevent expression injection.
+            // e.g., matrix value "'true' || always()" becomes the safe literal
+            // "'\'true\' || always()'" instead of raw injection into the expression.
+            _ => chunks.push(quote_expr_string_literal(value))
+          }
           idx = key_end
         } else {
           chunks.push(prefix)
@@ -464,6 +525,54 @@ fn substitute_matrix_refs_in_expr(
     }
   }
   chunks.join("")
+}
+
+///|
+fn mixed_expression_format_call(value : String) -> String? {
+  let open = "$\u{7b}\u{7b}"
+  let pattern = StringBuilder()
+  let args : Array[String] = []
+  let mut idx = 0
+  while idx < value.length() {
+    match find_substring(value, open, idx) {
+      Some(open_idx) => {
+        pattern.write_string(
+          escape_format_literal(text_slice(value, idx, open_idx)),
+        )
+        guard find_substring(value, "}}", open_idx + open.length())
+          is Some(close_idx) else {
+          return None
+        }
+        let body = text_slice(value, open_idx + open.length(), close_idx)
+          .trim(chars=" \t\r\n")
+          .to_owned()
+        if body.length() == 0 || body.contains(open) {
+          return None
+        }
+        pattern.write_string("{\{args.length()}}")
+        args.push("(" + body + ")")
+        idx = close_idx + 2
+      }
+      None => {
+        pattern.write_string(
+          escape_format_literal(text_slice(value, idx, value.length())),
+        )
+        idx = value.length()
+      }
+    }
+  }
+  Some(
+    "format(" +
+    quote_expr_string_literal(pattern.to_string()) +
+    ", " +
+    args.join(", ") +
+    ")",
+  )
+}
+
+///|
+fn escape_format_literal(text : String) -> String {
+  text.replace_all(old="{", new="{{").replace_all(old="}", new="}}")
 }
 
 ///|
@@ -1374,6 +1483,7 @@ fn expand_reusable_workflows_in_workspace(
   workspace_root : String,
   execution_root : String,
   errors : Array[String],
+  local_action_repo_roots? : Map[String, String] = Map([]),
 ) -> ReusableWorkflowExpansion {
   let expanded : Array[JobSpec] = []
   let aliases : Map[String, Array[String]] = Map([])
@@ -1526,6 +1636,7 @@ fn expand_reusable_workflows_in_workspace(
                         workspace_root,
                         execution_root,
                         errors,
+                        local_action_repo_roots~,
                       )
                       if errors.length() > before_errors {
                         break
@@ -1573,6 +1684,10 @@ fn expand_reusable_workflows_in_workspace(
                       source.source_root,
                       execution_root,
                     )
+                    if substituted_step.uses is Some(uses) &&
+                      parse_action_ref(uses).action is Some(LocalPath(_)) {
+                      local_action_repo_roots[uses] = source.source_root
+                    }
                     steps.push(substituted_step)
                   }
                   let actual_needs : Array[String] = []
@@ -1694,6 +1809,7 @@ fn expand_reusable_workflows_in_workspace(
                   source.source_root,
                   execution_root,
                   errors,
+                  local_action_repo_roots~,
                 )
                 if errors.length() > before_errors {
                   continue
@@ -2127,6 +2243,8 @@ fn lower_manifest_backed_action(
   deferred_post_tasks : Array[DeferredActionTask],
   errors : Array[String],
   composite_output_mappings? : Map[String, Map[String, String]] = Map([]),
+  composite_steps? : Map[String, CompositeStepPlan] = Map([]),
+  composite_parents? : Map[String, String] = Map([]),
 ) -> String {
   guard find_local_action_manifest(workspace_root, cached_root)
     is Some((_, manifest_text)) else {
@@ -2162,6 +2280,12 @@ fn lower_manifest_backed_action(
       errors,
       action_context_env~,
       composite_output_mappings~,
+      composite_steps~,
+      composite_parents~,
+      self_repository_root=match github_action_cache_layout(action_ref) {
+        Some(layout) => layout.repo_root
+        None => cached_root
+      },
     )
   }
   if action_manifest.runtime.has_prefix("node") {
@@ -2445,7 +2569,9 @@ fn lower_manifest_backed_action(
 ///|
 fn is_path_traversal(path : String) -> Bool {
   let normalized = normalize_local_action_path(path)
-  normalized.has_prefix("..") || normalized.has_prefix("/")
+  normalized == ".." ||
+  normalized.has_prefix("../") ||
+  normalized.has_prefix("/")
 }
 
 ///|
@@ -2486,6 +2612,9 @@ fn lower_local_action(
   errors : Array[String],
   action_context_env? : Map[String, String] = Map([]),
   composite_output_mappings? : Map[String, Map[String, String]] = Map([]),
+  composite_steps? : Map[String, CompositeStepPlan] = Map([]),
+  composite_parents? : Map[String, String] = Map([]),
+  self_repository_root? : String = ".",
 ) -> String {
   if workspace_root.length() == 0 {
     errors.push(
@@ -2533,7 +2662,13 @@ fn lower_local_action(
       deferred_post_tasks,
       errors,
       composite_output_mappings~,
+      composite_steps~,
+      composite_parents~,
     )
+  }
+  composite_steps[job.id + "/" + outer_step_id] = {
+    continue_on_error: outer_step.continue_on_error,
+    env: merge_env(job_env, outer_step.env),
   }
   let action = new_local_action(
     action_manifest.steps,
@@ -2554,11 +2689,31 @@ fn lower_local_action(
     let inner_step = action.steps[inner_index]
     let inner_step_id = default_step_id(inner_step, inner_index)
     let resolved_step_id = composite_step_id(outer_step_id, inner_step_id)
-    validate_step_if(job.id, resolved_step_id, inner_step.if_condition, errors)
+    for
+      step_id in [
+        resolved_step_id,
+        lifecycle_step_id(resolved_step_id, "pre"),
+        lifecycle_step_id(resolved_step_id, "post"),
+      ] {
+      composite_parents[job.id + "/" + step_id] = outer_step_id
+    }
+    let inner_if_condition = substitute_context_refs_in_expr(
+      inner_step.if_condition,
+      "inputs.",
+      resolved_inputs,
+      expand_expression_values=true,
+    )
+    let inner_continue_on_error = substitute_context_refs_in_expr(
+      inner_step.continue_on_error,
+      "inputs.",
+      resolved_inputs,
+      expand_expression_values=true,
+    )
+    validate_step_if(job.id, resolved_step_id, inner_if_condition, errors)
     validate_continue_on_error(
       job.id,
       resolved_step_id,
-      inner_step.continue_on_error,
+      inner_continue_on_error,
       errors,
     )
     let resolved_name = if inner_step.name.length() > 0 {
@@ -2591,14 +2746,19 @@ fn lower_local_action(
         working_directory: None,
         env: nested_env,
         with_values: nested_with_values,
-        if_condition: inner_step.if_condition,
-        continue_on_error: inner_step.continue_on_error,
+        if_condition: inner_if_condition,
+        continue_on_error: inner_continue_on_error,
         timeout_minutes: inner_step.timeout_minutes,
       }
       match action_ref {
         LocalPath(path) => {
+          let nested_base = if is_self_repository_uses(uses) {
+            self_repository_root
+          } else {
+            action_path_root
+          }
           let nested_action_path = normalize_local_action_path(
-            join_path(action_path_root, path),
+            join_path(nested_base, path),
           )
           local_previous_task_id = lower_local_action(
             workflow,
@@ -2615,6 +2775,9 @@ fn lower_local_action(
             errors,
             action_context_env~,
             composite_output_mappings~,
+            composite_steps~,
+            composite_parents~,
+            self_repository_root~,
           )
           inner_index += 1
           continue
@@ -2645,8 +2808,8 @@ fn lower_local_action(
             None,
             "",
           ),
-          inner_step.if_condition,
-          inner_step.continue_on_error,
+          inner_if_condition,
+          inner_continue_on_error,
           merge_env(
             merge_env(
               merge_env(outer_env, nested_env),
@@ -2677,6 +2840,8 @@ fn lower_local_action(
           deferred_post_tasks,
           errors,
           composite_output_mappings~,
+          composite_steps~,
+          composite_parents~,
         )
         inner_index += 1
         continue
@@ -2735,8 +2900,8 @@ fn lower_local_action(
       needs,
       shell,
       working_directory,
-      inner_step.if_condition,
-      inner_step.continue_on_error,
+      inner_if_condition,
+      inner_continue_on_error,
       env,
       action_scope=Some(action_scope),
     )
@@ -2850,6 +3015,7 @@ fn validate_wasi_job(job : JobSpec, errors : Array[String]) -> Unit {
 pub fn lower_push_workflow_in_workspace(
   workflow : WorkflowSpec,
   workspace_root : String,
+  self_repository_root? : String = "",
 ) -> LoweringResult {
   let errors : Array[String] = []
   let nodes : Array[@wf.FlowNode] = []
@@ -2867,16 +3033,20 @@ pub fn lower_push_workflow_in_workspace(
   let job_containers : Map[String, JobContainerSpec] = Map([])
   let job_services : Map[String, Map[String, JobContainerSpec]] = Map([])
   let composite_output_mappings : Map[String, Map[String, String]] = Map([])
+  let composite_steps : Map[String, CompositeStepPlan] = Map([])
+  let composite_parents : Map[String, String] = Map([])
   let entry_targets : Array[String] = []
   let seen_jobs : Map[String, Bool] = Map([])
   if workflow.workflow_call {
     errors.push("workflow_call is not supported in MVP")
   }
+  let local_action_repo_roots : Map[String, String] = Map([])
   let reusable_expansion = expand_reusable_workflows_in_workspace(
     workflow.jobs,
     workspace_root,
     workspace_root,
     errors,
+    local_action_repo_roots~,
   )
   let expanded_jobs = expand_matrix_jobs(
     reusable_expansion.jobs,
@@ -3004,6 +3174,18 @@ pub fn lower_push_workflow_in_workspace(
               step_index += 1
               continue
             }
+            let action_self_root = match local_action_repo_roots.get(path) {
+              Some(root) if root != workspace_root => root
+              _ if self_repository_root.length() > 0 => self_repository_root
+              Some(root) => root
+              None => "."
+            }
+            let action_path = if is_self_repository_uses(uses) &&
+              self_repository_root.length() > 0 {
+              join_path(self_repository_root, path)
+            } else {
+              path
+            }
             previous_task_id = lower_local_action(
               workflow,
               job,
@@ -3011,13 +3193,16 @@ pub fn lower_push_workflow_in_workspace(
               step,
               resolved_step_id,
               previous_task_id,
-              path,
+              action_path,
               workspace_root,
               tasks,
               task_plans,
               deferred_post_tasks,
               errors,
               composite_output_mappings~,
+              composite_steps~,
+              composite_parents~,
+              self_repository_root=action_self_root,
             )
             step_index += 1
             continue
@@ -3063,6 +3248,8 @@ pub fn lower_push_workflow_in_workspace(
             deferred_post_tasks,
             errors,
             composite_output_mappings~,
+            composite_steps~,
+            composite_parents~,
           )
           step_index += 1
           continue
@@ -3160,6 +3347,8 @@ pub fn lower_push_workflow_in_workspace(
       job_containers,
       job_services,
       composite_output_mappings,
+      composite_steps,
+      composite_parents,
     },
     errors,
   }

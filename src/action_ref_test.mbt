@@ -306,3 +306,77 @@ test "action ref: unresolved custom registry action is rejected" {
     content="[\"action 'bit://std/cache@v1' is not supported in MVP\"]",
   )
 }
+
+///|
+test "action ref: self-repository ref resolves to the repository-root local path" {
+  let action = expect_action(parse_action_ref("$/notify"))
+
+  guard action is LocalPath(path) else { abort("expected a local path") }
+  @debug.debug_inspect(
+    path,
+    content=(
+      #|"./notify"
+    ),
+  )
+}
+
+///|
+test "action ref: self-repository ref rejects an explicit version" {
+  let result = parse_action_ref("$/notify@v1")
+
+  @debug.debug_inspect(
+    result.errors,
+    content=(
+      #|["action ref '$/notify@v1' must not include @ref: $/ always resolves to the running commit"]
+    ),
+  )
+}
+
+///|
+test "action ref: self-repository ref rejects an empty path" {
+  let result = parse_action_ref("$/")
+
+  @debug.debug_inspect(
+    result.errors,
+    content=(
+      #|["action ref '$/' must include a path after $/"]
+    ),
+  )
+}
+
+///|
+test "action ref: self-repository ref rejects a path that escapes the repository" {
+  let result = parse_action_ref("$/greet/../../outside")
+
+  @debug.debug_inspect(
+    result.errors,
+    content=(
+      #|["action ref '$/greet/../../outside' must stay within the repository"]
+    ),
+  )
+}
+
+///|
+test "action ref: self-repository ref rejects an escaping path hidden behind a double slash" {
+  let result = parse_action_ref("$//../outside")
+
+  @debug.debug_inspect(
+    result.errors,
+    content=(
+      #|["action ref '$//../outside' must stay within the repository"]
+    ),
+  )
+}
+
+///|
+test "action ref: self-repository ref accepts a name that merely starts with two dots" {
+  let action = expect_action(parse_action_ref("$/..hidden"))
+
+  guard action is LocalPath(path) else { abort("expected a local path") }
+  @debug.debug_inspect(
+    path,
+    content=(
+      #|"./..hidden"
+    ),
+  )
+}

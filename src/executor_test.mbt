@@ -3365,6 +3365,59 @@ async test "executor: builtin setup-node exposes requested node version output a
 
 ///|
 #cfg(target="native")
+async test "executor: builtin setup-node skips an unsupported cache manager with a warning instead of failing" {
+  let workspace = prepare_workspace("executor-builtin-setup-node-cache-pnpm")
+  let node_log_path = workspace + "/setup-node.log"
+  let fake_node = test_support_prepare_fake_version_node_bin(
+    workspace, node_log_path, "24.9.0",
+  )
+
+  let workflow = new_workflow("ci", [
+    new_job(
+      "build",
+      [
+        new_uses_step("setup", "actions/setup-node@v4", with_values={
+          "node-version": "20",
+          "cache": "pnpm",
+        }),
+        new_run_step(
+          "verify",
+          "printf '%s' \"${{ steps.setup.outputs.cache-hit }}\"",
+          shell=Some("bash"),
+        ),
+      ],
+      env={ "ACTRUN_SETUP_NODE_BIN": fake_node },
+      defaults=new_run_defaults(shell=Some("bash")),
+    ),
+  ])
+
+  let lowered = lower_push_workflow(workflow)
+  let report = execute_lowered_native(lowered, workspace_root=workspace)
+
+  let setup = expect_task_report(report, "build/setup")
+  @debug.debug_inspect(
+    setup.status,
+    content=(
+      #|"success"
+    ),
+  )
+  @debug.debug_inspect(
+    setup.stderr,
+    content=(
+      #|"warning: setup-node cache 'pnpm' is not supported yet; continuing without a dependency cache"
+    ),
+  )
+  let verify = expect_task_report(report, "build/verify")
+  @debug.debug_inspect(
+    verify.stdout,
+    content=(
+      #|"false"
+    ),
+  )
+}
+
+///|
+#cfg(target="native")
 async test "executor: builtin setup-node works in job container run step" {
   let workspace = prepare_workspace("executor-builtin-setup-node-container")
   let node_log_path = workspace + "/setup-node-container.log"
@@ -3643,6 +3696,500 @@ async test "executor: local composite action runs inner steps" {
     ),
     content=(
       #|"from-local-action|<repo>/_build/test-workspaces/executor-local-action/.github/actions/setup"
+    ),
+  )
+}
+
+///|
+#cfg(target="native")
+async fn run_failing_composite(
+  name : String,
+  action_src : String,
+  continue_on_error : String,
+  nested_src? : String = "",
+) -> WorkflowRunReport {
+  let workspace = prepare_workspace(name)
+  ensure_dir(workspace + "/setup")
+  @xfs.write_string_to_file(workspace + "/setup/action.yml", action_src)
+  if nested_src.length() > 0 {
+    ensure_dir(workspace + "/setup/nested")
+    @xfs.write_string_to_file(
+      workspace + "/setup/nested/action.yml",
+      nested_src,
+    )
+  }
+  let workflow = new_workflow("ci", [
+    new_job(
+      "build",
+      [
+        new_uses_step("setup", "./setup", continue_on_error~),
+        new_run_step(
+          "verify", "printf '%s|%s' \"${{ steps.setup.outcome }}\" \"${{ steps.setup.conclusion }}\"",
+        ),
+      ],
+      defaults=new_run_defaults(shell=Some("sh")),
+    ),
+  ])
+  let lowered = lower_push_workflow_in_workspace(workflow, workspace)
+  @debug.debug_inspect(lowered.errors, content="[]")
+  execute_lowered_native(lowered, workspace_root=workspace)
+}
+
+///|
+let failing_composite_src : String =
+  #|name: Setup
+  #|runs:
+  #|  using: composite
+  #|  steps:
+  #|    - id: fail
+  #|      run: exit 1
+  #|      shell: sh
+  #|    - id: after
+  #|      run: echo after
+  #|      shell: sh
+
+///|
+#cfg(target="native")
+async test "executor: continue-on-error on a composite step lets the job continue after an inner failure" {
+  let report = run_failing_composite(
+    "executor-composite-coe", failing_composite_src, "true",
+  )
+
+  @debug.debug_inspect(report.ok, content="true")
+  @debug.debug_inspect(
+    expect_task_report(report, "build/verify").stdout,
+    content=(
+      #|"failure|success"
+    ),
+  )
+}
+
+///|
+#cfg(target="native")
+async test "executor: continue-on-error on a composite step still skips the remaining inner steps" {
+  let report = run_failing_composite(
+    "executor-composite-coe-skip", failing_composite_src, "true",
+  )
+
+  @debug.debug_inspect(
+    expect_task_report(report, "build/setup__after").status,
+    content=(
+      #|"skipped"
+    ),
+  )
+}
+
+///|
+#cfg(target="native")
+async test "executor: continue-on-error on a composite step still runs always() inner steps" {
+  let report = run_failing_composite(
+    "executor-composite-coe-always",
+    failing_composite_src.replace(
+      old="    - id: after\n",
+      new="    - id: after\n      if: always()\n",
+    ),
+    "true",
+  )
+
+  @debug.debug_inspect(
+    expect_task_report(report, "build/setup__after").status,
+    content=(
+      #|"success"
+    ),
+  )
+}
+
+///|
+#cfg(target="native")
+async test "executor: an inner failure in a composite step without continue-on-error fails the job" {
+  let report = run_failing_composite(
+    "executor-composite-no-coe", failing_composite_src, "false",
+  )
+
+  @debug.debug_inspect(report.ok, content="false")
+  @debug.debug_inspect(
+    expect_task_report(report, "build/verify").status,
+    content=(
+      #|"skipped"
+    ),
+  )
+}
+
+///|
+#cfg(target="native")
+async test "executor: continue-on-error on a composite step is evaluated once, not re-evaluated after each inner step" {
+  let report = run_failing_composite(
+    "executor-composite-coe-evaluated-once",
+    failing_composite_src.replace(
+      old="    - id: after\n",
+      new="    - id: after\n      if: always()\n",
+    ),
+    "${{ !failure() }}",
+  )
+
+  @debug.debug_inspect(report.ok, content="true")
+  @debug.debug_inspect(
+    expect_task_report(report, "build/verify").stdout,
+    content=(
+      #|"failure|success"
+    ),
+  )
+}
+
+///|
+#cfg(target="native")
+async test "executor: a step whose id contains __ does not overwrite the outcome of a step named by its prefix" {
+  let workspace = prepare_workspace("executor-double-underscore-step-id")
+  let workflow = new_workflow("ci", [
+    new_job(
+      "build",
+      [
+        new_run_step("deploy", "echo deployed"),
+        new_run_step("deploy__prod", "exit 1"),
+        new_run_step(
+          "check",
+          "printf '%s' \"${{ steps.deploy.outcome }}\"",
+          if_condition="always()",
+        ),
+      ],
+      defaults=new_run_defaults(shell=Some("sh")),
+    ),
+  ])
+  let lowered = lower_push_workflow_in_workspace(workflow, workspace)
+  let report = execute_lowered_native(lowered, workspace_root=workspace)
+
+  @debug.debug_inspect(
+    expect_task_report(report, "build/check").stdout,
+    content=(
+      #|"success"
+    ),
+  )
+}
+
+///|
+#cfg(target="native")
+async test "executor: continue-on-error on a composite step is evaluated in the outer step's environment" {
+  let workspace = prepare_workspace("executor-composite-coe-outer-env")
+  ensure_dir(workspace + "/setup")
+  let action_src =
+    #|name: Setup
+    #|runs:
+    #|  using: composite
+    #|  steps:
+    #|    - id: fail
+    #|      run: exit 1
+    #|      shell: sh
+    #|      env:
+    #|        SOFT_FAIL: "false"
+  @xfs.write_string_to_file(workspace + "/setup/action.yml", action_src)
+  let workflow = new_workflow("ci", [
+    new_job(
+      "build",
+      [
+        new_uses_step(
+          "setup",
+          "./setup",
+          env={ "SOFT_FAIL": "true" },
+          continue_on_error="${{ env.SOFT_FAIL == 'true' }}",
+        ),
+        new_run_step("verify", "echo verified"),
+      ],
+      defaults=new_run_defaults(shell=Some("sh")),
+    ),
+  ])
+  let lowered = lower_push_workflow_in_workspace(workflow, workspace)
+  let report = execute_lowered_native(lowered, workspace_root=workspace)
+
+  @debug.debug_inspect(report.ok, content="true")
+  @debug.debug_inspect(
+    expect_task_report(report, "build/verify").status,
+    content=(
+      #|"success"
+    ),
+  )
+}
+
+///|
+#cfg(target="native")
+async test "executor: an inner step is attributed to its real composite even when another composite id is its prefix" {
+  let workspace = prepare_workspace("executor-composite-id-collision")
+  ensure_dir(workspace + "/a")
+  ensure_dir(workspace + "/b")
+  @xfs.write_string_to_file(
+    workspace + "/a/action.yml",
+    (
+      #|name: A
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - id: test__run
+      #|      run: exit 1
+      #|      shell: sh
+    ),
+  )
+  @xfs.write_string_to_file(
+    workspace + "/b/action.yml",
+    (
+      #|name: B
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - id: ok
+      #|      run: echo ok
+      #|      shell: sh
+    ),
+  )
+  let workflow = new_workflow("ci", [
+    new_job(
+      "build",
+      [
+        new_uses_step("build", "./a"),
+        new_uses_step("build__test", "./b", continue_on_error="true"),
+      ],
+      defaults=new_run_defaults(shell=Some("sh")),
+    ),
+  ])
+  let lowered = lower_push_workflow_in_workspace(workflow, workspace)
+  let report = execute_lowered_native(lowered, workspace_root=workspace)
+
+  @debug.debug_inspect(report.ok, content="false")
+}
+
+///|
+#cfg(target="native")
+async test "executor: a composite output that forwards a nested composite output is set when the nested composite is the last step" {
+  let workspace = prepare_workspace("executor-composite-nested-output")
+  ensure_dir(workspace + "/setup")
+  ensure_dir(workspace + "/setup/nested")
+  @xfs.write_string_to_file(
+    workspace + "/setup/action.yml",
+    (
+      #|name: Setup
+      #|outputs:
+      #|  value:
+      #|    value: ${{ steps.nested.outputs.value }}
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - id: nested
+      #|      uses: ./nested
+    ),
+  )
+  @xfs.write_string_to_file(
+    workspace + "/setup/nested/action.yml",
+    (
+      #|name: Nested
+      #|outputs:
+      #|  value:
+      #|    value: ${{ steps.emit.outputs.value }}
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - id: emit
+      #|      run: echo "value=from-nested" >> "$GITHUB_OUTPUT"
+      #|      shell: sh
+    ),
+  )
+  let workflow = new_workflow("ci", [
+    new_job(
+      "build",
+      [
+        new_uses_step("setup", "./setup"),
+        new_run_step(
+          "verify", "printf '%s' \"${{ steps.setup.outputs.value }}\"",
+        ),
+      ],
+      defaults=new_run_defaults(shell=Some("sh")),
+    ),
+  ])
+  let lowered = lower_push_workflow_in_workspace(workflow, workspace)
+  let report = execute_lowered_native(lowered, workspace_root=workspace)
+
+  @debug.debug_inspect(
+    expect_task_report(report, "build/verify").stdout,
+    content=(
+      #|"from-nested"
+    ),
+  )
+}
+
+///|
+#cfg(target="native")
+async fn run_greet_after_tamper(name : String, uses : String) -> String {
+  let workspace = prepare_workspace(name)
+  let snapshot = workspace + "-snapshot"
+  test_support_remove_tree(snapshot)
+  let greet_src =
+    #|name: Greet
+    #|runs:
+    #|  using: composite
+    #|  steps:
+    #|    - run: cat "$GITHUB_ACTION_PATH/message.txt" > "$GITHUB_WORKSPACE/out.txt"
+    #|      shell: sh
+  for root in [workspace, snapshot] {
+    ensure_dir(root)
+    ensure_dir(root + "/greet")
+    @xfs.write_string_to_file(root + "/greet/action.yml", greet_src)
+    @xfs.write_string_to_file(root + "/greet/message.txt", "greeted")
+  }
+  let workflow = new_workflow("ci", [
+    new_job(
+      "build",
+      [
+        new_run_step("tamper", "printf tampered > greet/message.txt"),
+        new_uses_step("greet", uses),
+        new_run_step("verify", "cat out.txt"),
+      ],
+      defaults=new_run_defaults(shell=Some("sh")),
+    ),
+  ])
+  let lowered = lower_push_workflow_in_workspace(
+    workflow,
+    workspace,
+    self_repository_root=snapshot,
+  )
+  @debug.debug_inspect(lowered.errors, content="[]")
+  let report = execute_lowered_native(lowered, workspace_root=workspace)
+  expect_task_report(report, "build/verify").stdout
+}
+
+///|
+#cfg(target="native")
+async test "executor: a self-repository action runs from the running-commit snapshot even after the workspace changes" {
+  @debug.debug_inspect(
+    run_greet_after_tamper("executor-self-repository-snapshot", "$/greet"),
+    content=(
+      #|"greeted"
+    ),
+  )
+}
+
+///|
+#cfg(target="native")
+async test "executor: a workspace-relative action still runs from the current workspace" {
+  @debug.debug_inspect(
+    run_greet_after_tamper("executor-local-action-workspace", "./greet"),
+    content=(
+      #|"tampered"
+    ),
+  )
+}
+
+///|
+#cfg(target="native")
+async test "executor: continue-on-error on a composite step absorbs a failing pre script of a nested node action" {
+  let workspace = prepare_workspace("executor-composite-coe-node-pre")
+  let node_bin = test_support_prepare_fake_node_bin(
+    workspace,
+    workspace + "/node.log",
+  )
+  ensure_dir(workspace + "/wrap")
+  ensure_dir(workspace + "/wrap/node")
+  @xfs.write_string_to_file(
+    workspace + "/wrap/action.yml",
+    (
+      #|name: Wrap
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - id: node
+      #|      uses: ./node
+    ),
+  )
+  @xfs.write_string_to_file(
+    workspace + "/wrap/node/action.yml",
+    (
+      #|name: Node
+      #|runs:
+      #|  using: node20
+      #|  pre: pre.js
+      #|  main: main.js
+    ),
+  )
+  @xfs.write_string_to_file(workspace + "/wrap/node/pre.js", "exit 1\n")
+  @xfs.write_string_to_file(workspace + "/wrap/node/main.js", "echo main\n")
+  let workflow = new_workflow("ci", [
+    new_job(
+      "build",
+      [
+        new_uses_step("wrap", "./wrap", continue_on_error="true"),
+        new_run_step("verify", "echo verified"),
+      ],
+      env={ "ACTRUN_NODE_BIN": node_bin },
+      defaults=new_run_defaults(shell=Some("sh")),
+    ),
+  ])
+  let lowered = lower_push_workflow_in_workspace(workflow, workspace)
+  @debug.debug_inspect(lowered.errors, content="[]")
+  let report = execute_lowered_native(lowered, workspace_root=workspace)
+
+  @debug.debug_inspect(report.ok, content="true")
+  @debug.debug_inspect(
+    expect_task_report(report, "build/verify").status,
+    content=(
+      #|"success"
+    ),
+  )
+}
+
+///|
+let wrapping_composite_src : String =
+  #|name: Wrap
+  #|runs:
+  #|  using: composite
+  #|  steps:
+  #|    - id: nested
+  #|      uses: ./nested
+  #|      continue-on-error: NESTED_COE
+  #|    - id: after
+  #|      run: echo after
+  #|      shell: sh
+
+///|
+#cfg(target="native")
+async test "executor: continue-on-error on a nested composite step absorbs the failure inside the outer composite" {
+  let report = run_failing_composite(
+    "executor-composite-nested-coe",
+    wrapping_composite_src.replace(old="NESTED_COE", new="true"),
+    "false",
+    nested_src=failing_composite_src,
+  )
+
+  @debug.debug_inspect(report.ok, content="true")
+  @debug.debug_inspect(
+    expect_task_report(report, "build/setup__after").status,
+    content=(
+      #|"success"
+    ),
+  )
+  @debug.debug_inspect(
+    expect_task_report(report, "build/verify").stdout,
+    content=(
+      #|"success|success"
+    ),
+  )
+}
+
+///|
+#cfg(target="native")
+async test "executor: a nested composite failure propagates to the outermost composite step" {
+  let report = run_failing_composite(
+    "executor-composite-nested-top-coe",
+    wrapping_composite_src.replace(old="NESTED_COE", new="false"),
+    "true",
+    nested_src=failing_composite_src,
+  )
+
+  @debug.debug_inspect(
+    expect_task_report(report, "build/setup__after").status,
+    content=(
+      #|"skipped"
+    ),
+  )
+  @debug.debug_inspect(
+    expect_task_report(report, "build/verify").stdout,
+    content=(
+      #|"failure|success"
     ),
   )
 }
@@ -6109,6 +6656,50 @@ async test "security: env values cannot inject shell commands" {
     step.stdout.trim(chars=" \n\r\t").to_owned(),
     content=(
       #|"$(echo pwned)"
+    ),
+  )
+}
+
+///|
+#cfg(target="native")
+async fn format_condition_status(name : String, condition : String) -> String {
+  let workspace = prepare_workspace(name)
+  let workflow = new_workflow("ci", [
+    new_job(
+      "build",
+      [new_run_step("probe", "true", if_condition=condition)],
+      defaults=new_run_defaults(shell=Some("sh")),
+    ),
+  ])
+  let report = execute_lowered_native(
+    lower_push_workflow(workflow),
+    workspace_root=workspace,
+  )
+  expect_step_report(report, "build/probe").status
+}
+
+///|
+#cfg(target="native")
+async test "executor: format() in a condition turns doubled braces into literal braces" {
+  @debug.debug_inspect(
+    format_condition_status(
+      "executor-format-escaped-braces", "format('{{x}}-{0}', 'a') == '{x}-a'",
+    ),
+    content=(
+      #|"success"
+    ),
+  )
+}
+
+///|
+#cfg(target="native")
+async test "executor: format() in a condition does not expand placeholders inside an argument value" {
+  @debug.debug_inspect(
+    format_condition_status(
+      "executor-format-placeholder-in-value", "format('{0}-{1}', '{1}', 'b') == '{1}-b'",
+    ),
+    content=(
+      #|"success"
     ),
   )
 }

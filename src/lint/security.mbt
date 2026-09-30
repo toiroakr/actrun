@@ -393,7 +393,7 @@ fn check_secrets_to_third_party(
           // Skip trusted actions: actions/*, github/*, local paths
           if uses.has_prefix("actions/") ||
             uses.has_prefix("github/") ||
-            uses.has_prefix("./") ||
+            @ar.is_repository_local_uses(uses) ||
             uses.has_prefix("docker://") {
             continue
           }

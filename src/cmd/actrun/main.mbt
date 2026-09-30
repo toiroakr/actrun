@@ -3254,6 +3254,7 @@ async fn handle_clean_command(args : Array[String]) -> Int {
     "actions": actrun_root + "/github_actions",
     "artifacts": actrun_root + "/artifacts",
     "checkouts": actrun_root + "/checkouts",
+    "self-repository": actrun_root + "/self_repository",
   }
   if target == "all" {
     ignore(run_command("git", ["worktree", "prune"], cwd="."))
@@ -5722,8 +5723,7 @@ async fn run_in_docker_container(options : CliOptions) -> Int {
 ///|
 fn is_trusted_action_owner(uses : String) -> Bool {
   uses.has_prefix("actions/") ||
-  uses.has_prefix("./") ||
-  uses.has_prefix("../") ||
+  @ar.is_local_action_uses(uses) ||
   uses.has_prefix("docker://") ||
   uses.has_prefix("wasm://") ||
   uses.has_prefix("builtin://")
@@ -5736,24 +5736,39 @@ fn collect_third_party_actions(
 ) -> Array[String] {
   let seen : Map[String, Bool] = Map([])
   let result : Array[String] = []
-  for job in workflow.jobs {
-    // Scan reusable workflow files
+  scan_jobs_for_third_party(workflow.jobs, workspace_root, seen, result)
+  result
+}
+
+///|
+fn scan_jobs_for_third_party(
+  jobs : Array[@ar.JobSpec],
+  workspace_root : String,
+  seen : Map[String, Bool],
+  result : Array[String],
+) -> Unit {
+  for job in jobs {
     match job.reusable_workflow {
       Some(path) if path.has_prefix("./") => {
-        let full = join_path(workspace_root, path)
-        let callee_text = try @xfs.read_file_to_string(full) catch {
-          _ => ""
-        } noraise {
-          v => v
-        }
-        if callee_text.length() > 0 {
-          let parsed = @ar.parse_workflow_yaml(callee_text)
-          match parsed.workflow {
-            Some(callee) =>
-              for cj in callee.jobs {
-                scan_steps_for_third_party(cj.steps, seen, result, "")
-              }
-            None => ()
+        let full = normalize_scan_path(join_path(workspace_root, path))
+        if !seen.contains("workflow:" + full) {
+          seen["workflow:" + full] = true
+          let callee_text = try @xfs.read_file_to_string(full) catch {
+            _ => ""
+          } noraise {
+            v => v
+          }
+          if callee_text.length() > 0 {
+            match @ar.parse_workflow_yaml(callee_text).workflow {
+              Some(callee) =>
+                scan_jobs_for_third_party(
+                  callee.jobs,
+                  workspace_root,
+                  seen,
+                  result,
+                )
+              None => ()
+            }
           }
         }
       }
@@ -5762,18 +5777,17 @@ fn collect_third_party_actions(
     for step in job.steps {
       match step.uses {
         Some(uses) => {
-          // Direct third-party check
           if !is_trusted_action_owner(uses) && !seen.contains(uses) {
             seen[uses] = true
             result.push(uses)
           }
-          // Scan local composite action internals
-          if uses.has_prefix("./") || uses.has_prefix("../") {
+          if @ar.local_action_uses_path(uses) is Some(path) {
             scan_local_action_manifest(
-              join_path(workspace_root, uses),
+              join_path(workspace_root, path),
               uses,
               seen,
               result,
+              workspace_root~,
             )
           }
         }
@@ -5781,31 +5795,34 @@ fn collect_third_party_actions(
       }
     }
   }
-  result
 }
 
 ///|
-fn scan_steps_for_third_party(
-  steps : Array[@ar.StepSpec],
-  seen : Map[String, Bool],
-  result : Array[String],
-  via : String,
-) -> Unit {
-  for step in steps {
-    match step.uses {
-      Some(uses) =>
-        if !is_trusted_action_owner(uses) && !seen.contains(uses) {
-          seen[uses] = true
-          if via.length() > 0 {
-            result.push(uses + " (via " + via + ")")
-          } else {
-            result.push(uses)
-          }
-        }
-      None => ()
+fn normalize_scan_path(path : String) -> String {
+  let parts : Array[String] = []
+  for part_view in path.split("/") {
+    let part = part_view.to_owned()
+    if part.length() == 0 || part == "." {
+      continue
+    }
+    if part == ".." && parts.length() > 0 && parts[parts.length() - 1] != ".." {
+      ignore(parts.pop())
+    } else {
+      parts.push(part)
     }
   }
+  let joined = parts.join("/")
+  if path.has_prefix("/") {
+    "/" + joined
+  } else if joined.length() == 0 {
+    "."
+  } else {
+    joined
+  }
 }
+
+///|
+const MaxLocalActionScanDepth = 32
 
 ///|
 fn scan_local_action_manifest(
@@ -5813,7 +5830,14 @@ fn scan_local_action_manifest(
   via : String,
   seen : Map[String, Bool],
   result : Array[String],
+  workspace_root? : String = ".",
+  depth? : Int = 0,
 ) -> Unit {
+  let action_dir = normalize_scan_path(action_dir)
+  if depth > MaxLocalActionScanDepth || seen.contains("dir:" + action_dir) {
+    return
+  }
+  seen["dir:" + action_dir] = true
   let yml = action_dir + "/action.yml"
   let yaml = action_dir + "/action.yaml"
   let text = try @xfs.read_file_to_string(yml) catch {
@@ -5831,7 +5855,14 @@ fn scan_local_action_manifest(
   }
   // Extract uses: lines from manifest text (simple grep approach)
   for line_view in text.split("\n") {
-    let line = line_view.trim(chars=" \t\r").to_owned()
+    let trimmed = line_view.trim(chars=" \t\r").to_owned()
+    let line = if trimmed.has_prefix("- ") {
+      String::unsafe_substring(trimmed, start=2, end=trimmed.length())
+      .trim(chars=" \t")
+      .to_owned()
+    } else {
+      trimmed
+    }
     if line.has_prefix("uses:") {
       let uses = String::unsafe_substring(line, start=5, end=line.length())
         .trim(chars=" \t'\"")
@@ -5842,7 +5873,65 @@ fn scan_local_action_manifest(
         seen[uses] = true
         result.push(uses + " (via " + via + ")")
       }
+      if @ar.local_action_uses_path(uses) is Some(path) {
+        let base = if uses.has_prefix("$/") {
+          workspace_root
+        } else {
+          action_dir
+        }
+        scan_local_action_manifest(
+          join_path(base, path),
+          via,
+          seen,
+          result,
+          workspace_root~,
+          depth=depth + 1,
+        )
+      }
     }
+  }
+}
+
+///|
+let self_repository_snapshot_script : String =
+  #|set -euo pipefail
+  #|root=_build/actrun/self_repository
+  #|mkdir -p "$root"
+  #|snap=$(cd "$(mktemp -d "$root/snap.XXXXXX")" && pwd)
+  #|trap 'rm -rf "$snap"' ERR
+  #|cd "$1"
+  #|if [ "$(git rev-parse --show-toplevel 2>/dev/null || true)" = "$(pwd -P)" ]; then
+  #|  git ls-files -z -co --exclude-standard |
+  #|    while IFS= read -r -d '' f; do
+  #|      case "$f" in _build/*|.git/*) continue ;; esac
+  #|      [ -e "$f" ] && printf '%s\0' "$f"
+  #|    done |
+  #|    tar --null -cf - -T - | tar -C "$snap" -xf -
+  #|else
+  #|  find . -mindepth 1 -maxdepth 1 ! -name _build ! -name .git |
+  #|    tar -cf - -T - | tar -C "$snap" -xf -
+  #|fi
+  #|printf '%s' "$snap"
+
+///|
+async fn create_self_repository_snapshot(execution_root : String) -> String? {
+  let (code, stdout, _) = run_command(
+    "bash",
+    ["-c", self_repository_snapshot_script, "bash", execution_root],
+    cwd=".",
+  )
+  let path = stdout.trim(chars=" \t\r\n").to_owned()
+  if code == 0 && path.length() > 0 {
+    Some(path)
+  } else {
+    None
+  }
+}
+
+///|
+async fn remove_self_repository_snapshot(path : String) -> Unit {
+  if path.length() > 0 {
+    ignore(run_command("rm", ["-rf", path], cwd="."))
   }
 }
 
@@ -8086,7 +8175,10 @@ async fn handle_workflow_run_command(raw_options : CliOptions) -> Int {
   // Check for third-party actions and prompt for confirmation
   let trust_env = @env.get_env_var("ACTRUN_TRUST").unwrap_or("") == "true"
   if !options.trust_actions && !trust_env && !options.dry_run {
-    let third_party = collect_third_party_actions(filtered_workflow)
+    let third_party = collect_third_party_actions(
+      filtered_workflow,
+      workspace_root=execution_root,
+    )
     if third_party.length() > 0 {
       println("The following third-party actions will be fetched and executed:")
       for action_ref in third_party {
@@ -8139,10 +8231,28 @@ async fn handle_workflow_run_command(raw_options : CliOptions) -> Int {
     return 1
   }
 
+  let self_repository_root = if @ar.workflow_uses_self_repository(
+      filtered_workflow, execution_root,
+    ) {
+    match create_self_repository_snapshot(execution_root) {
+      Some(path) => path
+      None => {
+        print_errors([
+          "failed to snapshot the running repository for $/ actions",
+        ])
+        return 1
+      }
+    }
+  } else {
+    ""
+  }
   let lowered = @ar.lower_push_workflow_in_workspace(
-    filtered_workflow, execution_root,
+    filtered_workflow,
+    execution_root,
+    self_repository_root~,
   )
   if lowered.errors.length() > 0 {
+    remove_self_repository_snapshot(self_repository_root)
     print_errors(lowered.errors)
     return 1
   }
@@ -8159,6 +8269,7 @@ async fn handle_workflow_run_command(raw_options : CliOptions) -> Int {
     sandbox_writable=options.sandbox_writable,
     allow_destructive_checkout_clean=workspace_mode != "local",
   )
+  remove_self_repository_snapshot(self_repository_root)
   let report = @ar.mask_report_secrets(raw_report, @ar.collect_secret_values())
   if report.issues.length() > 0 {
     print_errors(report.issues)

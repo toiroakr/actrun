@@ -402,3 +402,138 @@ async test "resolve_real_path: returns path for non-existent path" {
     ),
   )
 }
+
+///|
+async test "write_setup_node_shim: a bare node command is exec'd by absolute path so the shim cannot resolve to itself" {
+  let workspace = wbtest_setup_tmpdir()
+  guard write_setup_node_shim(workspace, "build/setup", "sh", "v20.0.0")
+    is Some(shim_dir) else {
+    fail("shim was not written")
+  }
+  let script = @xfs.read_file_to_string(shim_dir + "/node")
+  let exec_line = script
+    .split("\n")
+    .filter(line => line.has_prefix("exec "))
+    .map(line => line.to_owned())
+    .collect()
+  assert_true(exec_line.length() == 1 && exec_line[0].has_prefix("exec '/"))
+  wbtest_cleanup(workspace)
+}
+
+///|
+async test "resolve_command_on_path: skips entries that are not executable files" {
+  let workspace = wbtest_setup_tmpdir()
+  let _ = wbtest_run("mkdir", ["-p", workspace + "/dir-first/node"])
+  let _ = wbtest_run("mkdir", ["-p", workspace + "/plain-first"])
+  let _ = wbtest_run("touch", [workspace + "/plain-first/node"])
+  let _ = wbtest_run("mkdir", ["-p", workspace + "/real"])
+  let _ = wbtest_run("sh", [
+    "-c",
+    "printf '#!/bin/sh\\n' > " +
+    workspace +
+    "/real/node && chmod +x " +
+    workspace +
+    "/real/node",
+  ])
+  let resolved = resolve_command_on_path(
+    "node",
+    search_path=Some(
+      workspace +
+      "/dir-first:" +
+      workspace +
+      "/plain-first:" +
+      workspace +
+      "/real",
+    ),
+  )
+  @debug.assert_eq(resolved, workspace + "/real/node")
+  wbtest_cleanup(workspace)
+}
+
+///|
+async test "resolve_command_on_path: a node found through a relative PATH entry is returned as an absolute path" {
+  let relative_bin = "_build/wbtest-relative-path-bin"
+  let _ = wbtest_run("mkdir", ["-p", relative_bin])
+  let _ = wbtest_run("sh", [
+    "-c",
+    "printf '#!/bin/sh\\n' > " +
+    relative_bin +
+    "/node && chmod +x " +
+    relative_bin +
+    "/node",
+  ])
+  let resolved = resolve_command_on_path("node", search_path=Some(relative_bin))
+  let _ = wbtest_run("rm", ["-rf", relative_bin])
+  assert_true(
+    resolved.has_prefix("/") &&
+    resolved.has_suffix("/" + relative_bin + "/node"),
+  )
+}
+
+///|
+async test "resolve_command_on_path: a relative PATH entry is resolved against the given directory" {
+  let workspace = wbtest_setup_tmpdir()
+  let _ = wbtest_run("mkdir", ["-p", workspace + "/bin"])
+  let _ = wbtest_run("sh", [
+    "-c",
+    "printf '#!/bin/sh\\n' > " +
+    workspace +
+    "/bin/node && chmod +x " +
+    workspace +
+    "/bin/node",
+  ])
+  let resolved = resolve_command_on_path(
+    "node",
+    search_path=Some("bin"),
+    cwd=workspace,
+  )
+  let workspace_name = match workspace.rev_find("/") {
+    Some(idx) => workspace.unsafe_substring(start=idx, end=workspace.length())
+    None => workspace
+  }
+  assert_true(
+    resolved.has_prefix("/") &&
+    resolved.has_suffix(workspace_name + "/bin/node"),
+  )
+  wbtest_cleanup(workspace)
+}
+
+///|
+async test "resolve_command_on_path: a relative path to an executable is returned as an absolute path" {
+  let relative_bin = "_build/wbtest-relative-node-bin"
+  let _ = wbtest_run("mkdir", ["-p", relative_bin])
+  let resolved = resolve_command_on_path("./" + relative_bin + "/node")
+  let _ = wbtest_run("rm", ["-rf", relative_bin])
+  assert_true(
+    resolved.has_prefix("/") &&
+    resolved.has_suffix("/" + relative_bin + "/node") &&
+    !resolved.contains("/./"),
+  )
+}
+
+///|
+test "step_conclusion_visible: a failure inside one composite is hidden from a sibling composite that shares its id prefix" {
+  let parents : Map[String, String] = {
+    "setup__child": "setup",
+    "setup__post__child": "setup__post",
+  }
+  let scope = StepScope::{
+    step_id: "setup__post__child",
+    parent_of: fn(id) { parents.get(id) },
+  }
+  assert_false(step_conclusion_visible("setup__child", Some(scope)))
+}
+
+///|
+test "step_conclusion_visible: a failure inside an enclosing composite is visible to its nested steps" {
+  let parents : Map[String, String] = {
+    "setup__child": "setup",
+    "setup__nested__leaf": "setup__nested",
+    "setup__nested": "setup",
+  }
+  let scope = StepScope::{
+    step_id: "setup__nested__leaf",
+    parent_of: fn(id) { parents.get(id) },
+  }
+  assert_true(step_conclusion_visible("setup__child", Some(scope)))
+}

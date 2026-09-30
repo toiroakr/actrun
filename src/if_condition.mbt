@@ -876,33 +876,13 @@ fn if_expression_function_value(
       let fmt_str = if_condition_value_to_string(
         if_condition_atom_value(args[0], ctx),
       )
-      let mut result = fmt_str
-      let mut i = 1
-      while i < args.length() {
-        let placeholder = "{" + (i - 1).to_string() + "}"
-        let replacement = if_condition_value_to_string(
-          if_condition_atom_value(args[i], ctx),
-        )
-        let mut new_result = ""
-        let mut search_from = 0
-        while true {
-          match find_if_substring(result, placeholder, search_from) {
-            Some(pos) => {
-              new_result = new_result +
-                if_text_slice(result, search_from, pos) +
-                replacement
-              search_from = pos + placeholder.length()
-            }
-            None => {
-              new_result = new_result +
-                if_text_slice(result, search_from, result.length())
-              break
-            }
-          }
-        }
-        result = new_result
-        i += 1
-      }
+      let values = args[1:]
+        .iter()
+        .map(fn(arg) {
+          if_condition_value_to_string(if_condition_atom_value(arg, ctx))
+        })
+        .collect()
+      let result = expand_format_template(fmt_str, values)
       return Some(if_condition_value_from_json(Json::string(result)))
     }
     None => ()
@@ -1255,4 +1235,42 @@ fn evaluate_boolean_condition(text : String, ctx : IfConditionContext) -> Bool {
     return false
   }
   eval_if_condition_bool(trimmed, ctx)
+}
+
+///|
+fn expand_format_template(template : String, values : Array[String]) -> String {
+  let out = StringBuilder()
+  let chars = template.to_array()
+  let mut i = 0
+  while i < chars.length() {
+    let c = chars[i]
+    if c == '{' && i + 1 < chars.length() && chars[i + 1] == '{' {
+      out.write_char('{')
+      i += 2
+      continue
+    }
+    if c == '}' && i + 1 < chars.length() && chars[i + 1] == '}' {
+      out.write_char('}')
+      i += 2
+      continue
+    }
+    if c == '{' {
+      let mut j = i + 1
+      let mut index = 0
+      while j < chars.length() && chars[j] >= '0' && chars[j] <= '9' {
+        index = index * 10 + (chars[j].to_int() - '0'.to_int())
+        j += 1
+      }
+      if j > i + 1 && j < chars.length() && chars[j] == '}' {
+        if values.get(index) is Some(value) {
+          out.write_string(value)
+          i = j + 1
+          continue
+        }
+      }
+    }
+    out.write_char(c)
+    i += 1
+  }
+  out.to_string()
 }

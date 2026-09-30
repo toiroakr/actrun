@@ -618,6 +618,12 @@ pub fn new_task_plan(
 }
 
 ///|
+pub struct CompositeStepPlan {
+  continue_on_error : String
+  env : Map[String, String]
+}
+
+///|
 pub struct ExecutionPlan {
   tasks : Array[TaskPlan]
   job_outputs : Map[String, Map[String, String]]
@@ -631,6 +637,8 @@ pub struct ExecutionPlan {
   job_containers : Map[String, JobContainerSpec]
   job_services : Map[String, Map[String, JobContainerSpec]]
   composite_output_mappings : Map[String, Map[String, String]]
+  composite_steps : Map[String, CompositeStepPlan]
+  composite_parents : Map[String, String]
 }
 
 ///|

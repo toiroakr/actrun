@@ -1,0 +1,3 @@
+id=composite-continue-on-error
+commit=feat: honor continue-on-error on composite action steps
+summary=`continue-on-error: true` on a step that uses a composite action lets the job continue after an inner failure, skips the remaining inner steps, and reports outcome=failure / conclusion=success

@@ -1,0 +1,8 @@
+name: remote-reusable
+on: workflow_call
+jobs:
+  greet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: $/greet
+      - run: test "$(tail -n 1 greet.log)" = remote-greeted

@@ -1,0 +1,3 @@
+id=composite-if-inputs
+commit=feat: resolve inputs refs in composite action step conditions
+summary=`if: inputs.<name> == ...` inside a composite action step is evaluated against the resolved input value

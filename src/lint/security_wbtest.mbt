@@ -550,3 +550,41 @@ test "missing-timeout: strict mode only" {
   let found2 = diags2.filter(fn(d) { d.code == "missing-timeout" })
   @debug.debug_inspect(found2.length(), content="1")
 }
+
+///|
+test "secrets-to-third-party: a self-repository action is not third-party" {
+  let yaml =
+    #|name: test
+    #|'on': push
+    #|jobs:
+    #|  build:
+    #|    runs-on: ubuntu-latest
+    #|    steps:
+    #|      - uses: $/local/action
+    #|        env:
+    #|          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  let parsed = @ar.parse_workflow_yaml(yaml)
+  guard parsed.workflow is Option::Some(workflow) else { fail("parse failed") }
+  let diags = check_security(workflow)
+  let found = diags.filter(fn(d) { d.code == "secrets-to-third-party" })
+  @debug.debug_inspect(found.length(), content="0")
+}
+
+///|
+test "secrets-to-third-party: a parent-relative action is still checked" {
+  let yaml =
+    #|name: test
+    #|'on': push
+    #|jobs:
+    #|  build:
+    #|    runs-on: ubuntu-latest
+    #|    steps:
+    #|      - uses: ../untrusted
+    #|        env:
+    #|          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  let parsed = @ar.parse_workflow_yaml(yaml)
+  guard parsed.workflow is Option::Some(workflow) else { fail("parse failed") }
+  let diags = check_security(workflow)
+  let found = diags.filter(fn(d) { d.code == "secrets-to-third-party" })
+  @debug.debug_inspect(found.length(), content="1")
+}

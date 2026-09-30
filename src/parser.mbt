@@ -1527,12 +1527,46 @@ fn parse_environment(
 }
 
 ///|
+fn normalize_self_repository_uses(
+  uses : String?,
+  errors : Array[String],
+  ctx : String,
+) -> String? {
+  guard uses is Some(text) && is_self_repository_uses(text) else { uses }
+  match self_repository_local_path(text) {
+    Ok(path) => Some(path)
+    Err(message) => {
+      errors.push(ctx + " '\{text}' " + message)
+      uses
+    }
+  }
+}
+
+///|
+fn validate_self_repository_step_uses(
+  steps : Array[StepSpec],
+  errors : Array[String],
+  ctx : String,
+) -> Array[StepSpec] {
+  for idx, step in steps {
+    ignore(
+      normalize_self_repository_uses(
+        step.uses,
+        errors,
+        ctx + "[" + idx.to_string() + "].uses",
+      ),
+    )
+  }
+  steps
+}
+
+///|
 fn parse_job(id : String, value : YamlValue, errors : Array[String]) -> JobSpec {
   let ctx = "jobs." + id
   let fields = yaml_as_obj(value, errors, ctx)
   let strategy_value = yaml_obj_get(fields, "strategy")
-  let reusable_workflow = yaml_as_optional_string(
-    yaml_obj_get(fields, "uses"),
+  let reusable_workflow = normalize_self_repository_uses(
+    yaml_as_optional_string(yaml_obj_get(fields, "uses"), errors, ctx + ".uses"),
     errors,
     ctx + ".uses",
   )
@@ -1553,15 +1587,19 @@ fn parse_job(id : String, value : YamlValue, errors : Array[String]) -> JobSpec 
   )
   new_job(
     id,
-    if reusable_workflow is Some(_) {
-      parse_job_steps_optional(
-        yaml_obj_get(fields, "steps"),
-        errors,
-        ctx + ".steps",
-      )
-    } else {
-      parse_job_steps(yaml_obj_get(fields, "steps"), errors, ctx + ".steps")
-    },
+    validate_self_repository_step_uses(
+      if reusable_workflow is Some(_) {
+        parse_job_steps_optional(
+          yaml_obj_get(fields, "steps"),
+          errors,
+          ctx + ".steps",
+        )
+      } else {
+        parse_job_steps(yaml_obj_get(fields, "steps"), errors, ctx + ".steps")
+      },
+      errors,
+      ctx + ".steps",
+    ),
     name=yaml_as_optional_string(
       yaml_obj_get(fields, "name"),
       errors,

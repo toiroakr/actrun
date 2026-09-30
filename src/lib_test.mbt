@@ -321,6 +321,275 @@ test "parser: parse step continue-on-error" {
 }
 
 ///|
+test "parser: self-repository step uses is kept as written so it can resolve from the running commit" {
+  let src =
+    #|name: ci
+    #|on: push
+    #|jobs:
+    #|  build:
+    #|    runs-on: ubuntu-latest
+    #|    steps:
+    #|      - uses: $/notify
+  let parsed = parse_workflow_yaml(src)
+  let workflow = expect_workflow(parsed)
+
+  @debug.debug_inspect(parsed.errors, content="[]")
+  @debug.debug_inspect(
+    workflow.jobs[0].steps[0].uses.unwrap_or(""),
+    content=(
+      #|"$/notify"
+    ),
+  )
+}
+
+///|
+test "parser: self-repository reusable workflow uses is normalized to a repository-root local path" {
+  let src =
+    #|name: ci
+    #|on: push
+    #|jobs:
+    #|  call:
+    #|    uses: $/.github/workflows/reusable.yaml
+  let workflow = expect_workflow(parse_workflow_yaml(src))
+
+  @debug.debug_inspect(
+    workflow.jobs[0].reusable_workflow.unwrap_or(""),
+    content=(
+      #|"./.github/workflows/reusable.yaml"
+    ),
+  )
+}
+
+///|
+test "parser: self-repository uses with @ref is a parse error" {
+  let src =
+    #|name: ci
+    #|on: push
+    #|jobs:
+    #|  build:
+    #|    runs-on: ubuntu-latest
+    #|    steps:
+    #|      - uses: $/notify@v1
+  let parsed = parse_workflow_yaml(src)
+
+  @debug.debug_inspect(
+    parsed.errors,
+    content=(
+      #|["jobs.build.steps[0].uses '$/notify@v1' must not include @ref: $/ always resolves to the running commit"]
+    ),
+  )
+}
+
+///|
+test "parser: self-repository uses that normalizes to the repository root is a parse error" {
+  let src =
+    #|name: ci
+    #|on: push
+    #|jobs:
+    #|  build:
+    #|    runs-on: ubuntu-latest
+    #|    steps:
+    #|      - uses: $/greet/..
+  let parsed = parse_workflow_yaml(src)
+
+  @debug.debug_inspect(
+    parsed.errors,
+    content=(
+      #|["jobs.build.steps[0].uses '$/greet/..' must include a path after $/"]
+    ),
+  )
+}
+
+///|
+test "parser: self-repository uses with an empty path is a parse error" {
+  let src =
+    #|name: ci
+    #|on: push
+    #|jobs:
+    #|  build:
+    #|    runs-on: ubuntu-latest
+    #|    steps:
+    #|      - uses: $/
+  let parsed = parse_workflow_yaml(src)
+
+  @debug.debug_inspect(
+    parsed.errors,
+    content=(
+      #|["jobs.build.steps[0].uses '$/' must include a path after $/"]
+    ),
+  )
+}
+
+///|
+test "lowering: inputs refs inside string literals in a composite action step if are left untouched" {
+  let plan = lower_composite_step_if(
+    "lower-local-action-if-inputs-literal", "inputs.provider == 'inputs.provider'",
+  )
+
+  @debug.debug_inspect(
+    plan.if_condition,
+    content=(
+      #|"'slack' == 'inputs.provider'"
+    ),
+  )
+}
+
+///|
+test "self repository detection: a top-level $/ step uses the self repository" {
+  let workspace = prepare_local_action_workspace("self-repo-detect-top")
+  let workflow = new_workflow("ci", [
+    new_job("build", [new_uses_step("greet", "$/greet")]),
+  ])
+  @debug.debug_inspect(
+    workflow_uses_self_repository(workflow, workspace),
+    content="true",
+  )
+}
+
+///|
+test "self repository detection: a $/ step nested in a local composite uses the self repository" {
+  let workspace = prepare_local_action_workspace("self-repo-detect-nested")
+  test_ensure_dir(workspace + "/wrap")
+  @xfs.write_string_to_file(
+    workspace + "/wrap/action.yml",
+    (
+      #|name: Wrap
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - uses: $/greet
+    ),
+  )
+  let workflow = new_workflow("ci", [
+    new_job("build", [new_uses_step("wrap", "./wrap")]),
+  ])
+  @debug.debug_inspect(
+    workflow_uses_self_repository(workflow, workspace),
+    content="true",
+  )
+}
+
+///|
+test "self repository detection: a workflow without $/ does not use the self repository" {
+  let workspace = prepare_local_action_workspace("self-repo-detect-none")
+  test_ensure_dir(workspace + "/wrap")
+  @xfs.write_string_to_file(
+    workspace + "/wrap/action.yml",
+    (
+      #|name: Wrap
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - run: echo hi
+      #|      shell: sh
+    ),
+  )
+  let workflow = new_workflow("ci", [
+    new_job("build", [new_uses_step("wrap", "./wrap")]),
+  ])
+  @debug.debug_inspect(
+    workflow_uses_self_repository(workflow, workspace),
+    content="false",
+  )
+}
+
+///|
+test "self repository detection: stops on reusable workflows that call each other" {
+  let workspace = prepare_local_action_workspace("self-repo-detect-cycle")
+  test_ensure_dir(workspace + "/.github")
+  test_ensure_dir(workspace + "/.github/workflows")
+  let callee_src =
+    #|name: NAME
+    #|on: workflow_call
+    #|jobs:
+    #|  call:
+    #|    uses: ./.github/workflows/OTHER.yml
+  @xfs.write_string_to_file(
+    workspace + "/.github/workflows/a.yml",
+    callee_src.replace(old="NAME", new="a").replace(old="OTHER", new="b"),
+  )
+  @xfs.write_string_to_file(
+    workspace + "/.github/workflows/b.yml",
+    callee_src.replace(old="NAME", new="b").replace(old="OTHER", new="a"),
+  )
+  let workflow = expect_workflow(
+    parse_workflow_yaml(
+      (
+        #|name: ci
+        #|on: push
+        #|jobs:
+        #|  call:
+        #|    uses: ./.github/workflows/a.yml
+      ),
+    ),
+  )
+  @debug.debug_inspect(
+    workflow_uses_self_repository(workflow, workspace),
+    content="false",
+  )
+}
+
+///|
+test "lowering: a self-repository action whose name starts with two dots is lowered" {
+  let workspace = prepare_local_action_workspace("lower-self-repo-dot-dot-name")
+  test_ensure_dir(workspace + "/..hidden")
+  @xfs.write_string_to_file(
+    workspace + "/..hidden/action.yml",
+    (
+      #|name: Hidden
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - run: echo hidden
+      #|      shell: sh
+    ),
+  )
+  let workflow = new_workflow("ci", [
+    new_job("build", [new_uses_step("hidden", "$/..hidden")]),
+  ])
+  let result = lower_push_workflow_in_workspace(workflow, workspace)
+  @debug.debug_inspect(result.errors, content="[]")
+}
+
+///|
+test "lowering: continue-on-error of a nested composite step can use the enclosing inputs" {
+  let workspace = prepare_local_action_workspace("lower-nested-coe-inputs")
+  test_ensure_dir(workspace + "/wrap")
+  test_ensure_dir(workspace + "/wrap/inner")
+  @xfs.write_string_to_file(
+    workspace + "/wrap/action.yml",
+    (
+      #|name: Wrap
+      #|inputs:
+      #|  allow_failure:
+      #|    default: "true"
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - id: inner
+      #|      uses: ./inner
+      #|      continue-on-error: ${{ inputs.allow_failure }}
+    ),
+  )
+  @xfs.write_string_to_file(
+    workspace + "/wrap/inner/action.yml",
+    (
+      #|name: Inner
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - run: exit 1
+      #|      shell: sh
+    ),
+  )
+  let workflow = new_workflow("ci", [
+    new_job("build", [new_uses_step("wrap", "./wrap")]),
+  ])
+  let result = lower_push_workflow_in_workspace(workflow, workspace)
+  @debug.debug_inspect(result.errors, content="[]")
+}
+
+///|
 test "parser: parse checkout uses step" {
   let src =
     #|name: ci
@@ -1452,6 +1721,126 @@ test "lowering: local composite action expands nested local action" {
     show_plan.action_scope.unwrap_or(""),
     content=(
       #|"test/setup"
+    ),
+  )
+}
+
+///|
+test "lowering: self-repository uses inside a local composite action resolves from the repository root" {
+  let workspace = prepare_local_action_workspace("lower-local-action-self-repo")
+  test_ensure_dir(workspace + "/shared")
+  test_ensure_dir(workspace + "/.github")
+  test_ensure_dir(workspace + "/.github/actions")
+  test_ensure_dir(workspace + "/.github/actions/setup")
+  let shared_src =
+    #|name: Shared
+    #|runs:
+    #|  using: composite
+    #|  steps:
+    #|    - id: write
+    #|      run: printf '%s' shared-ok > shared.txt
+    #|      shell: bash
+  @xfs.write_string_to_file(workspace + "/shared/action.yml", shared_src)
+  let action_src =
+    #|name: Setup
+    #|runs:
+    #|  using: composite
+    #|  steps:
+    #|    - id: child
+    #|      uses: $/shared
+  @xfs.write_string_to_file(
+    workspace + "/.github/actions/setup/action.yml",
+    action_src,
+  )
+
+  let workflow = new_workflow("ci", [
+    new_job("test", [new_uses_step("setup", "./.github/actions/setup")]),
+  ])
+
+  let result = lower_push_workflow_in_workspace(workflow, workspace)
+
+  @debug.debug_inspect(result.errors, content="[]")
+  let write_plan = expect_task_plan(result.plan, "test/setup__child__write")
+  @debug.debug_inspect(
+    write_plan.action_scope.unwrap_or(""),
+    content=(
+      #|"test/setup__child"
+    ),
+  )
+}
+
+///|
+fn lower_composite_step_if(
+  name : String,
+  if_condition : String,
+  with_values? : Map[String, String] = Map([]),
+) -> TaskPlan raise {
+  let workspace = prepare_local_action_workspace(name)
+  test_ensure_dir(workspace + "/notify")
+  let action_src =
+    #|name: Notify
+    #|inputs:
+    #|  provider:
+    #|    default: slack
+    #|runs:
+    #|  using: composite
+    #|  steps:
+    #|    - id: send
+    #|      if: IF_CONDITION
+    #|      run: echo send
+    #|      shell: bash
+  @xfs.write_string_to_file(
+    workspace + "/notify/action.yml",
+    action_src.replace(old="IF_CONDITION", new=if_condition),
+  )
+  let workflow = new_workflow("ci", [
+    new_job("test", [new_uses_step("notify", "./notify", with_values~)]),
+  ])
+  let result = lower_push_workflow_in_workspace(workflow, workspace)
+  @debug.debug_inspect(result.errors, content="[]")
+  expect_task_plan(result.plan, "test/notify__send")
+}
+
+///|
+test "lowering: inputs refs in a composite action step if are substituted with the resolved input" {
+  let plan = lower_composite_step_if(
+    "lower-local-action-if-inputs", "inputs.provider == 'slack'",
+  )
+
+  @debug.debug_inspect(
+    plan.if_condition,
+    content=(
+      #|"'slack' == 'slack'"
+    ),
+  )
+}
+
+///|
+test "lowering: an input given as an expression is expanded as that expression in a composite action step if" {
+  let plan = lower_composite_step_if(
+    "lower-local-action-if-inputs-expression",
+    "inputs.provider == 'slack'",
+    with_values={ "provider": "${{ steps.detect.outputs.provider }}" },
+  )
+
+  @debug.debug_inspect(
+    plan.if_condition,
+    content=(
+      #|"(steps.detect.outputs.provider) == 'slack'"
+    ),
+  )
+}
+
+///|
+test "lowering: github.event.inputs refs in a composite action step if are left untouched" {
+  let plan = lower_composite_step_if(
+    "lower-local-action-if-event-inputs", "github.event.inputs.provider == 'slack'",
+  )
+
+  @debug.debug_inspect(
+    plan.if_condition,
+    content=(
+      #|"github.event.inputs.provider == 'slack'"
     ),
   )
 }
@@ -3110,6 +3499,117 @@ async test "lowering: remote reusable workflow local action is resolved from cac
 
 ///|
 #cfg(target="native")
+async fn lower_remote_reusable_self_repository(
+  name : String,
+  repo : String,
+  ref_ : String,
+) -> String {
+  let workspace = prepare_local_action_workspace(name)
+  let remote_repo = workspace + "/remote_repo"
+  for
+    dir in [
+      "", "/.github", "/.github/workflows", "/.github/actions", "/.github/actions/wrap",
+      "/greet",
+    ] {
+    test_ensure_dir(remote_repo + dir)
+  }
+  test_ensure_dir(workspace + "/greet")
+  let reusable_src =
+    #|name: reusable
+    #|on: workflow_call
+    #|jobs:
+    #|  build:
+    #|    runs-on: ubuntu-latest
+    #|    steps:
+    #|      - id: wrap
+    #|        uses: $/.github/actions/wrap
+  let wrap_src =
+    #|name: wrap
+    #|runs:
+    #|  using: composite
+    #|  steps:
+    #|    - id: greet
+    #|      uses: $/greet
+  let greet_src =
+    #|name: greet
+    #|runs:
+    #|  using: composite
+    #|  steps:
+    #|    - id: write
+    #|      run: echo WHO-greet
+    #|      shell: bash
+  @xfs.write_string_to_file(
+    remote_repo + "/.github/workflows/reusable.yml",
+    reusable_src,
+  )
+  @xfs.write_string_to_file(
+    remote_repo + "/.github/actions/wrap/action.yml",
+    wrap_src,
+  )
+  @xfs.write_string_to_file(
+    remote_repo + "/greet/action.yml",
+    greet_src.replace(old="WHO", new="remote"),
+  )
+  @xfs.write_string_to_file(
+    workspace + "/greet/action.yml",
+    greet_src.replace(old="WHO", new="caller"),
+  )
+  let caller_src =
+    #|name: caller
+    #|on: push
+    #|jobs:
+    #|  call:
+    #|    uses: demo/REPO/.github/workflows/reusable.yml@REF
+  let workflow = parse_workflow_yaml(
+    caller_src.replace(old="REPO", new=repo).replace(old="REF", new=ref_),
+  ).workflow.unwrap()
+  let log_path = workspace + "/git.log"
+  test_support_remove_tree(
+    "_build/actrun/github_actions/demo/self-repo-tools/v1",
+  )
+  let git_path = test_support_prepare_fake_git_bin_from_source(
+    workspace, remote_repo, log_path,
+  )
+  let prefetch = prefetch_workflow_github_actions_native(
+    workflow,
+    workspace,
+    git_bin=Some(git_path),
+  )
+  let result = lower_push_workflow_in_workspace(workflow, workspace)
+
+  @debug.debug_inspect(prefetch.errors, content="[]")
+  @debug.debug_inspect(result.errors, content="[]")
+  expect_task_plan(result.plan, "call__build/wrap__greet__write").script
+}
+
+///|
+#cfg(target="native")
+async test "lowering: self-repository uses nested in a remote reusable workflow resolves from the cached repo" {
+  @debug.debug_inspect(
+    lower_remote_reusable_self_repository(
+      "reusable-workflow-remote-self-repository", "self-repo-tools", "v1",
+    ),
+    content=(
+      #|"echo remote-greet"
+    ),
+  )
+}
+
+///|
+#cfg(target="native")
+async test "lowering: self-repository uses nested in a remote reusable workflow resolves when the ref contains a slash" {
+  @debug.debug_inspect(
+    lower_remote_reusable_self_repository(
+      "reusable-workflow-remote-self-repository-slash-ref", "slash-ref-tools", "release/v1",
+    ),
+    content=(
+      #|"echo remote-greet"
+    ),
+  )
+}
+
+///|
+#cfg(target="native")
 async test "prefetch: SHA-pinned action uses git init+fetch+checkout instead of clone" {
   let workspace = prepare_local_action_workspace("prefetch-sha-pinning")
   let sha = "abc1234def5678abc1234def5678abc1234def56"
@@ -3510,5 +4010,208 @@ test "parser: post-if failure() is rejected" {
   @debug.debug_inspect(
     parsed.errors.iter().any(fn(e) { e.contains("post-if") }),
     content="true",
+  )
+}
+
+///|
+test "lowering: self-repository uses inside a composite called from a local reusable workflow resolves from the snapshot" {
+  let workspace = prepare_local_action_workspace(
+    "reusable-workflow-local-self-repo",
+  )
+  let snapshot = workspace + "-snapshot"
+  for root in [workspace, snapshot] {
+    test_ensure_dir(root)
+    test_ensure_dir(root + "/greet")
+    test_ensure_dir(root + "/wrap")
+    test_ensure_dir(root + "/.github")
+    test_ensure_dir(root + "/.github/workflows")
+    @xfs.write_string_to_file(
+      root + "/wrap/action.yml",
+      (
+        #|runs:
+        #|  using: composite
+        #|  steps:
+        #|    - id: child
+        #|      uses: $/greet
+      ),
+    )
+    @xfs.write_string_to_file(
+      root + "/.github/workflows/reusable.yml",
+      (
+        #|on:
+        #|  workflow_call:
+        #|jobs:
+        #|  build:
+        #|    runs-on: ubuntu-latest
+        #|    steps:
+        #|      - id: wrap
+        #|        uses: ./wrap
+      ),
+    )
+  }
+  let greet_from = fn(label : String) {
+    "runs:\n  using: composite\n  steps:\n    - id: say\n      run: echo " +
+    label +
+    "\n      shell: sh\n"
+  }
+  @xfs.write_string_to_file(
+    workspace + "/greet/action.yml",
+    greet_from("workspace"),
+  )
+  @xfs.write_string_to_file(
+    snapshot + "/greet/action.yml",
+    greet_from("snapshot"),
+  )
+  let parsed = parse_workflow_yaml(
+    (
+      #|on: push
+      #|jobs:
+      #|  call:
+      #|    uses: ./.github/workflows/reusable.yml
+    ),
+  )
+  let result = lower_push_workflow_in_workspace(
+    parsed.workflow.unwrap(),
+    workspace,
+    self_repository_root=snapshot,
+  )
+
+  @debug.debug_inspect(result.errors, content="[]")
+  @debug.debug_inspect(
+    expect_task_plan(result.plan, "call__build/wrap__child__say").script,
+    content=(
+      #|"echo snapshot"
+    ),
+  )
+}
+
+///|
+#cfg(target="native")
+async test "prefetch: same-named self-repository actions in different repositories are both prefetched" {
+  let workspace = prepare_local_action_workspace(
+    "prefetch-self-repository-per-repo",
+  )
+  let remote_repo = workspace + "/remote_repo"
+  for dir in ["", "/.github", "/.github/workflows", "/greet"] {
+    test_ensure_dir(remote_repo + dir)
+  }
+  test_ensure_dir(workspace + "/greet")
+  @xfs.write_string_to_file(
+    remote_repo + "/.github/workflows/reusable.yml",
+    (
+      #|on: workflow_call
+      #|jobs:
+      #|  build:
+      #|    runs-on: ubuntu-latest
+      #|    steps:
+      #|      - uses: $/greet
+    ),
+  )
+  @xfs.write_string_to_file(
+    remote_repo + "/greet/action.yml",
+    (
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - uses: demo/prefetch-dep-tool@v1
+    ),
+  )
+  @xfs.write_string_to_file(
+    remote_repo + "/action.yml",
+    (
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - run: echo dep
+      #|      shell: sh
+    ),
+  )
+  @xfs.write_string_to_file(
+    workspace + "/greet/action.yml",
+    (
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - run: echo caller
+      #|      shell: sh
+    ),
+  )
+  let workflow = parse_workflow_yaml(
+    (
+      #|on: push
+      #|jobs:
+      #|  first:
+      #|    runs-on: ubuntu-latest
+      #|    steps:
+      #|      - uses: $/greet
+      #|  call:
+      #|    uses: demo/prefetch-self-repo-tools/.github/workflows/reusable.yml@v1
+    ),
+  ).workflow.unwrap()
+  for cached in ["prefetch-self-repo-tools", "prefetch-dep-tool"] {
+    test_support_remove_tree("_build/actrun/github_actions/demo/" + cached)
+  }
+  let git_path = test_support_prepare_fake_git_bin_from_source(
+    workspace,
+    remote_repo,
+    workspace + "/git.log",
+  )
+  let prefetch = prefetch_workflow_github_actions_native(
+    workflow,
+    workspace,
+    git_bin=Some(git_path),
+  )
+
+  @debug.debug_inspect(prefetch.errors, content="[]")
+  assert_true(prefetch.fetched.contains("demo/prefetch-dep-tool@v1"))
+}
+
+///|
+test "lowering: an input mixing text and an expression becomes a format() call in a composite action step if" {
+  let plan = lower_composite_step_if(
+    "lower-local-action-if-inputs-mixed",
+    "inputs.provider == 'pre-main'",
+    with_values={ "provider": "pre-${{ github.ref_name }}" },
+  )
+
+  @debug.debug_inspect(
+    plan.if_condition,
+    content=(
+      #|"format('pre-{0}', (github.ref_name)) == 'pre-main'"
+    ),
+  )
+}
+
+///|
+test "lowering: an input mixing text and an expression becomes a format() call in a composite action step continue-on-error" {
+  let workspace = prepare_local_action_workspace("lower-coe-inputs-mixed")
+  test_ensure_dir(workspace + "/soft")
+  @xfs.write_string_to_file(
+    workspace + "/soft/action.yml",
+    (
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - id: try
+      #|      run: exit 1
+      #|      shell: sh
+      #|      continue-on-error: ${{ inputs.mode == 'it''s {soft}-main' }}
+    ),
+  )
+  let workflow = new_workflow("ci", [
+    new_job("build", [
+      new_uses_step("soft", "./soft", with_values={
+        "mode": "it's {soft}-${{ github.ref_name }}",
+      }),
+    ]),
+  ])
+  let result = lower_push_workflow_in_workspace(workflow, workspace)
+
+  @debug.debug_inspect(result.errors, content="[]")
+  @debug.debug_inspect(
+    expect_task_plan(result.plan, "build/soft__try").continue_on_error,
+    content=(
+      #|"${{ format('it''s {{soft}}-{0}', (github.ref_name)) == 'it''s {soft}-main' }}"
+    ),
   )
 }

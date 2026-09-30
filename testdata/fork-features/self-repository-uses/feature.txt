@@ -1,0 +1,3 @@
+id=self-repository-uses
+commit=feat: support the $/ self-repository uses syntax
+summary=`uses: $/path` resolves to the repository of the file that contains it, at the running commit: from workflow steps and local composites it reads the caller repository even after a step changes the workspace, and from a fetched composite (`demo/tools/wrap@v1`) or a remote reusable workflow (`demo/tools/.github/workflows/reusable.yml@v1`) it reads that fetched repository. `remote/` holds the fetched repositories, served through ACTRUN_GITHUB_BASE_URL

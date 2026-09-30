@@ -1,0 +1,8 @@
+name: Fail
+runs:
+  using: composite
+  steps:
+    - run: exit 1
+      shell: bash
+    - run: echo should-not-run > "$GITHUB_WORKSPACE/after.log"
+      shell: bash

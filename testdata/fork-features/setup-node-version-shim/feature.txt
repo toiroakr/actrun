@@ -1,0 +1,3 @@
+id=setup-node-version-shim
+commit=fix: exec the host node by absolute path from the setup-node shim
+summary=builtin setup-node with a node-version different from the host node still runs `node` instead of looping forever

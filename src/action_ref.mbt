@@ -115,6 +115,56 @@ fn action_parse_error(text : String, msg : String) -> ActionRefParseResult {
 }
 
 ///|
+const SelfRepositoryPrefix : String = "$/"
+
+///|
+fn is_self_repository_uses(uses : String) -> Bool {
+  uses.has_prefix(SelfRepositoryPrefix)
+}
+
+///|
+fn self_repository_local_path(uses : String) -> Result[String, String] {
+  let path = substring(uses, SelfRepositoryPrefix.length(), uses.length())
+  let normalized = normalize_local_action_path("./" + path)
+  if normalized == "." {
+    Err("must include a path after $/")
+  } else if path.contains("@") {
+    Err("must not include @ref: $/ always resolves to the running commit")
+  } else if normalized == ".." || normalized.has_prefix("../") {
+    Err("must stay within the repository")
+  } else {
+    Ok("./" + path)
+  }
+}
+
+///|
+pub fn is_local_action_uses(uses : String) -> Bool {
+  uses.has_prefix("./") ||
+  uses.has_prefix("../") ||
+  is_self_repository_uses(uses)
+}
+
+///|
+pub fn is_repository_local_uses(uses : String) -> Bool {
+  uses.has_prefix("./") ||
+  (is_self_repository_uses(uses) && self_repository_local_path(uses) is Ok(_))
+}
+
+///|
+pub fn local_action_uses_path(uses : String) -> String? {
+  if uses.has_prefix("./") || uses.has_prefix("../") {
+    Some(uses)
+  } else if is_self_repository_uses(uses) {
+    match self_repository_local_path(uses) {
+      Ok(path) => Some(path)
+      Err(_) => None
+    }
+  } else {
+    None
+  }
+}
+
+///|
 pub fn parse_action_ref(text : String) -> ActionRefParseResult {
   let uses = text.trim(chars=" ").to_owned()
   if uses.length() == 0 {
@@ -122,6 +172,12 @@ pub fn parse_action_ref(text : String) -> ActionRefParseResult {
   }
   if uses.has_prefix("./") || uses.has_prefix("../") {
     return { action: Some(LocalPath(uses)), errors: [], }
+  }
+  if uses.has_prefix(SelfRepositoryPrefix) {
+    return match self_repository_local_path(uses) {
+      Ok(path) => { action: Some(LocalPath(path)), errors: [], }
+      Err(message) => action_parse_error(uses, message)
+    }
   }
   if uses.has_prefix("docker://") {
     let image = substring(uses, 9, uses.length())

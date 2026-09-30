@@ -1,0 +1,13 @@
+name: Gate
+inputs:
+  mode:
+    default: "off"
+runs:
+  using: composite
+  steps:
+    - if: inputs.mode == 'on'
+      run: echo on > "$GITHUB_WORKSPACE/gate.log"
+      shell: bash
+    - if: inputs.mode != 'on'
+      run: echo off > "$GITHUB_WORKSPACE/gate.log"
+      shell: bash

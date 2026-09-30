@@ -5242,3 +5242,154 @@ test "security: glob_match rejects path traversal patterns" {
     content="false",
   )
 }
+
+///|
+test "collect_third_party_actions: a self-repository action is not third-party" {
+  let workflow = @ar.new_workflow("ci", [
+    @ar.new_job("build", [@ar.new_uses_step("notify", "$/notify")]),
+  ])
+  @debug.debug_inspect(collect_third_party_actions(workflow), content="[]")
+}
+
+///|
+async test "create_self_repository_snapshot: each run gets its own snapshot of the repository files outside the workspace" {
+  let workspace = "_build/wbtest-self-repository-workspace"
+  ignore(run_command("rm", ["-rf", workspace], cwd="."))
+  ignore(
+    run_command(
+      "sh",
+      [
+        "-c", "mkdir -p \"$1/greet\" \"$1/ignored\" && cd \"$1\" && git init -q && printf 'ignored/\\n' > .gitignore && printf 'name: Greet\\n' > greet/action.yml && git add -A && git -c user.name=t -c user.email=t@t -c commit.gpgSign=false commit -qm init && printf 'dirty\\n' > untracked.txt && printf 'x\\n' > ignored/big.txt",
+        "sh", workspace,
+      ],
+      cwd=".",
+    ),
+  )
+  let first = create_self_repository_snapshot(workspace)
+  let second = create_self_repository_snapshot(workspace)
+  guard first is Some(first) && second is Some(second) else {
+    fail("snapshot was not created")
+  }
+  assert_true(first != second)
+  assert_true(first.contains("/_build/actrun/self_repository/"))
+  assert_true(!first.contains("wbtest-self-repository-workspace"))
+  assert_true(@xfs.path_exists(first + "/greet/action.yml"))
+  assert_true(@xfs.path_exists(first + "/untracked.txt"))
+  assert_true(!@xfs.path_exists(first + "/ignored/big.txt"))
+  remove_self_repository_snapshot(first)
+  remove_self_repository_snapshot(second)
+  ignore(run_command("rm", ["-rf", workspace], cwd="."))
+}
+
+///|
+async test "collect_third_party_actions: a third-party action nested under self-repository composites is reported" {
+  let workspace = "_build/wbtest-third-party-nested"
+  ignore(run_command("rm", ["-rf", workspace], cwd="."))
+  ignore(
+    run_command(
+      "sh",
+      [
+        "-c", "mkdir -p \"$1/wrapper\" \"$1/inner\" && printf 'runs:\\n  using: composite\\n  steps:\\n    - uses: $/inner\\n' > \"$1/wrapper/action.yml\" && printf 'runs:\\n  using: composite\\n  steps:\\n    - uses: third-party/action@v1\\n' > \"$1/inner/action.yml\"",
+        "sh", workspace,
+      ],
+      cwd=".",
+    ),
+  )
+  let workflow = @ar.new_workflow("ci", [
+    @ar.new_job("build", [@ar.new_uses_step("wrap", "$/wrapper")]),
+  ])
+  let found = collect_third_party_actions(workflow, workspace_root=workspace)
+  ignore(run_command("rm", ["-rf", workspace], cwd="."))
+  @debug.debug_inspect(
+    found,
+    content=(
+      #|["third-party/action@v1 (via $/wrapper)"]
+    ),
+  )
+}
+
+///|
+async test "collect_third_party_actions: a relative action inside a composite is scanned from the composite's directory" {
+  let workspace = "_build/wbtest-third-party-relative"
+  ignore(run_command("rm", ["-rf", workspace], cwd="."))
+  ignore(
+    run_command(
+      "sh",
+      [
+        "-c", "mkdir -p \"$1/wrapper/inner\" && printf 'runs:\\n  using: composite\\n  steps:\\n    - uses: ./inner\\n' > \"$1/wrapper/action.yml\" && printf 'runs:\\n  using: composite\\n  steps:\\n    - uses: third-party/action@v1\\n' > \"$1/wrapper/inner/action.yml\"",
+        "sh", workspace,
+      ],
+      cwd=".",
+    ),
+  )
+  let workflow = @ar.new_workflow("ci", [
+    @ar.new_job("build", [@ar.new_uses_step("wrap", "$/wrapper")]),
+  ])
+  let found = collect_third_party_actions(workflow, workspace_root=workspace)
+  ignore(run_command("rm", ["-rf", workspace], cwd="."))
+  @debug.debug_inspect(
+    found,
+    content=(
+      #|["third-party/action@v1 (via $/wrapper)"]
+    ),
+  )
+}
+
+///|
+async test "collect_third_party_actions: a composite that uses itself is scanned once" {
+  let workspace = "_build/wbtest-third-party-self-loop"
+  ignore(run_command("rm", ["-rf", workspace], cwd="."))
+  ignore(
+    run_command(
+      "sh",
+      [
+        "-c", "mkdir -p \"$1/wrapper\" && printf 'runs:\\n  using: composite\\n  steps:\\n    - uses: ../wrapper\\n    - uses: third-party/action@v1\\n' > \"$1/wrapper/action.yml\"",
+        "sh", workspace,
+      ],
+      cwd=".",
+    ),
+  )
+  let workflow = @ar.new_workflow("ci", [
+    @ar.new_job("build", [@ar.new_uses_step("wrap", "$/wrapper")]),
+  ])
+  let found = collect_third_party_actions(workflow, workspace_root=workspace)
+  ignore(run_command("rm", ["-rf", workspace], cwd="."))
+  @debug.debug_inspect(
+    found,
+    content=(
+      #|["third-party/action@v1 (via $/wrapper)"]
+    ),
+  )
+}
+
+///|
+async test "collect_third_party_actions: composites used from local reusable workflows are scanned, following nested reusable calls" {
+  let workspace = "_build/wbtest-third-party-reusable"
+  ignore(run_command("rm", ["-rf", workspace], cwd="."))
+  ignore(
+    run_command(
+      "sh",
+      [
+        "-c", "mkdir -p \"$1/wrapper\" \"$1/.github/workflows\" && printf 'runs:\\n  using: composite\\n  steps:\\n    - uses: third-party/action@v1\\n' > \"$1/wrapper/action.yml\" && printf 'on: workflow_call\\njobs:\\n  outer:\\n    uses: ./.github/workflows/inner.yml\\n' > \"$1/.github/workflows/outer.yml\" && printf 'on: workflow_call\\njobs:\\n  loop:\\n    uses: ./.github/workflows/outer.yml\\n  inner:\\n    runs-on: ubuntu-latest\\n    steps:\\n      - uses: $/wrapper\\n' > \"$1/.github/workflows/inner.yml\"",
+        "sh", workspace,
+      ],
+      cwd=".",
+    ),
+  )
+  let workflow = @ar.parse_workflow_yaml(
+    (
+      #|on: push
+      #|jobs:
+      #|  call:
+      #|    uses: ./.github/workflows/outer.yml
+    ),
+  ).workflow.unwrap()
+  let found = collect_third_party_actions(workflow, workspace_root=workspace)
+  ignore(run_command("rm", ["-rf", workspace], cwd="."))
+  @debug.debug_inspect(
+    found,
+    content=(
+      #|["third-party/action@v1 (via $/wrapper)"]
+    ),
+  )
+}
