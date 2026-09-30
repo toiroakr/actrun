@@ -19,7 +19,8 @@
     "lib/actrun.js",
     "lib/actrun.d.ts",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "scripts/wasi-runner.mjs"
   ],
   "scripts": {
     "build:cli": "moon build --release src/cmd/actrun --target js",

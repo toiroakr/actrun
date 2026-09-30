@@ -224,10 +224,14 @@ fn basename_of(path : String) -> String {
 ///|
 fn wasi_runner_shim_candidates(workspace_root : String) -> Array[String] {
   let candidates = [
-    "scripts/wasi-runner.mjs", "node_modules/@mizchi/actrun/scripts/wasi-runner.mjs",
+    "scripts/wasi-runner.mjs", "node_modules/@toiroakr/actrun/scripts/wasi-runner.mjs",
+    "node_modules/@mizchi/actrun/scripts/wasi-runner.mjs",
   ]
   if workspace_root.length() > 0 {
     candidates.push(workspace_root + "/scripts/wasi-runner.mjs")
+    candidates.push(
+      workspace_root + "/node_modules/@toiroakr/actrun/scripts/wasi-runner.mjs",
+    )
     candidates.push(
       workspace_root + "/node_modules/@mizchi/actrun/scripts/wasi-runner.mjs",
     )

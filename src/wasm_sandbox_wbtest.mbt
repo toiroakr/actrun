@@ -150,3 +150,20 @@ test "wasi_runner_shim_candidates: includes install path patterns" {
     true,
   )
 }
+
+///|
+test "wasi_runner_shim_candidates: includes the shim shipped in the @toiroakr/actrun npm package" {
+  let candidates = wasi_runner_shim_candidates("/tmp/actrun-workspace")
+  @debug.assert_eq(
+    wasm_sandbox_has_string(
+      candidates, "node_modules/@toiroakr/actrun/scripts/wasi-runner.mjs",
+    ),
+    true,
+  )
+  @debug.assert_eq(
+    wasm_sandbox_has_string(
+      candidates, "/tmp/actrun-workspace/node_modules/@toiroakr/actrun/scripts/wasi-runner.mjs",
+    ),
+    true,
+  )
+}
