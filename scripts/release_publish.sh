@@ -21,8 +21,18 @@ if [ -z "$notes" ]; then
   exit 1
 fi
 
+if view_output="$(npm view "$name@$version" version 2>&1)"; then
+  published=true
+elif printf '%s' "$view_output" | grep -q 'E404'; then
+  published=false
+else
+  echo "Could not check whether $name@$version is published:" >&2
+  echo "$view_output" >&2
+  exit 1
+fi
+
 tag_commit="$(git ls-remote --tags origin "refs/tags/$tag" | cut -f1)"
-if npm view "$name@$version" version > /dev/null 2>&1; then
+if [ "$published" = true ]; then
   echo "$name@$version is already published"
   if [ -z "$tag_commit" ]; then
     # Tagging HEAD here could point the tag at a commit that did not produce
