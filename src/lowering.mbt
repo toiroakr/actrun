@@ -431,7 +431,15 @@ fn substitute_matrix_refs_in_expr(
   expression : String,
   matrix_values : Map[String, String],
 ) -> String {
-  let prefix = "matrix."
+  substitute_context_refs_in_expr(expression, "matrix.", matrix_values)
+}
+
+///|
+fn substitute_context_refs_in_expr(
+  expression : String,
+  prefix : String,
+  values : Map[String, String],
+) -> String {
   let chunks : Array[String] = []
   let mut idx = 0
   while idx < expression.length() {
@@ -446,7 +454,7 @@ fn substitute_matrix_refs_in_expr(
         }
         if key_end > key_start {
           let key = text_slice(expression, key_start, key_end)
-          let value = matrix_values.get(key).unwrap_or("")
+          let value = values.get(key).unwrap_or("")
           // Quote the value as a string literal to prevent expression injection.
           // e.g., matrix value "'true' || always()" becomes the safe literal
           // "'\'true\' || always()'" instead of raw injection into the expression.
