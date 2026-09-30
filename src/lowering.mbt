@@ -3123,8 +3123,9 @@ pub fn lower_push_workflow_in_workspace(
               continue
             }
             let action_self_root = match local_action_repo_roots.get(path) {
+              Some(root) if root != workspace_root => root
+              _ if self_repository_root.length() > 0 => self_repository_root
               Some(root) => root
-              None if self_repository_root.length() > 0 => self_repository_root
               None => "."
             }
             let action_path = if is_self_repository_uses(uses) &&

@@ -3992,3 +3992,75 @@ test "parser: post-if failure() is rejected" {
     content="true",
   )
 }
+
+///|
+test "lowering: self-repository uses inside a composite called from a local reusable workflow resolves from the snapshot" {
+  let workspace = prepare_local_action_workspace(
+    "reusable-workflow-local-self-repo",
+  )
+  let snapshot = workspace + "-snapshot"
+  for root in [workspace, snapshot] {
+    test_ensure_dir(root)
+    test_ensure_dir(root + "/greet")
+    test_ensure_dir(root + "/wrap")
+    test_ensure_dir(root + "/.github")
+    test_ensure_dir(root + "/.github/workflows")
+    @xfs.write_string_to_file(
+      root + "/wrap/action.yml",
+      (
+        #|runs:
+        #|  using: composite
+        #|  steps:
+        #|    - id: child
+        #|      uses: $/greet
+      ),
+    )
+    @xfs.write_string_to_file(
+      root + "/.github/workflows/reusable.yml",
+      (
+        #|on:
+        #|  workflow_call:
+        #|jobs:
+        #|  build:
+        #|    runs-on: ubuntu-latest
+        #|    steps:
+        #|      - id: wrap
+        #|        uses: ./wrap
+      ),
+    )
+  }
+  let greet_from = fn(label : String) {
+    "runs:\n  using: composite\n  steps:\n    - id: say\n      run: echo " +
+    label +
+    "\n      shell: sh\n"
+  }
+  @xfs.write_string_to_file(
+    workspace + "/greet/action.yml",
+    greet_from("workspace"),
+  )
+  @xfs.write_string_to_file(
+    snapshot + "/greet/action.yml",
+    greet_from("snapshot"),
+  )
+  let parsed = parse_workflow_yaml(
+    (
+      #|on: push
+      #|jobs:
+      #|  call:
+      #|    uses: ./.github/workflows/reusable.yml
+    ),
+  )
+  let result = lower_push_workflow_in_workspace(
+    parsed.workflow.unwrap(),
+    workspace,
+    self_repository_root=snapshot,
+  )
+
+  @debug.debug_inspect(result.errors, content="[]")
+  @debug.debug_inspect(
+    expect_task_plan(result.plan, "call__build/wrap__child__say").script,
+    content=(
+      #|"echo snapshot"
+    ),
+  )
+}
