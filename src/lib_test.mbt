@@ -4064,3 +4064,84 @@ test "lowering: self-repository uses inside a composite called from a local reus
     ),
   )
 }
+
+///|
+#cfg(target="native")
+async test "prefetch: same-named self-repository actions in different repositories are both prefetched" {
+  let workspace = prepare_local_action_workspace(
+    "prefetch-self-repository-per-repo",
+  )
+  let remote_repo = workspace + "/remote_repo"
+  for dir in ["", "/.github", "/.github/workflows", "/greet"] {
+    test_ensure_dir(remote_repo + dir)
+  }
+  test_ensure_dir(workspace + "/greet")
+  @xfs.write_string_to_file(
+    remote_repo + "/.github/workflows/reusable.yml",
+    (
+      #|on: workflow_call
+      #|jobs:
+      #|  build:
+      #|    runs-on: ubuntu-latest
+      #|    steps:
+      #|      - uses: $/greet
+    ),
+  )
+  @xfs.write_string_to_file(
+    remote_repo + "/greet/action.yml",
+    (
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - uses: demo/prefetch-dep-tool@v1
+    ),
+  )
+  @xfs.write_string_to_file(
+    remote_repo + "/action.yml",
+    (
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - run: echo dep
+      #|      shell: sh
+    ),
+  )
+  @xfs.write_string_to_file(
+    workspace + "/greet/action.yml",
+    (
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - run: echo caller
+      #|      shell: sh
+    ),
+  )
+  let workflow = parse_workflow_yaml(
+    (
+      #|on: push
+      #|jobs:
+      #|  first:
+      #|    runs-on: ubuntu-latest
+      #|    steps:
+      #|      - uses: $/greet
+      #|  call:
+      #|    uses: demo/prefetch-self-repo-tools/.github/workflows/reusable.yml@v1
+    ),
+  ).workflow.unwrap()
+  for cached in ["prefetch-self-repo-tools", "prefetch-dep-tool"] {
+    test_support_remove_tree("_build/actrun/github_actions/demo/" + cached)
+  }
+  let git_path = test_support_prepare_fake_git_bin_from_source(
+    workspace,
+    remote_repo,
+    workspace + "/git.log",
+  )
+  let prefetch = prefetch_workflow_github_actions_native(
+    workflow,
+    workspace,
+    git_bin=Some(git_path),
+  )
+
+  @debug.debug_inspect(prefetch.errors, content="[]")
+  assert_true(prefetch.fetched.contains("demo/prefetch-dep-tool@v1"))
+}

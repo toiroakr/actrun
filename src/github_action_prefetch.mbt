@@ -294,7 +294,7 @@ async fn prefetch_action_uses(
         Some(root) => normalize_local_action_path(join_path(root, path))
         None => path
       }
-      let visit_key = "local:" + resolved_root
+      let visit_key = "local:" + join_path(workspace_root, resolved_root)
       if visited.get(visit_key) is Some(_) {
         return
       }
