@@ -5856,8 +5856,13 @@ fn scan_local_action_manifest(
         result.push(uses + " (via " + via + ")")
       }
       if @ar.local_action_uses_path(uses) is Some(path) {
+        let base = if uses.has_prefix("$/") {
+          workspace_root
+        } else {
+          action_dir
+        }
         scan_local_action_manifest(
-          join_path(workspace_root, path),
+          join_path(base, path),
           via,
           seen,
           result,
@@ -8151,7 +8156,10 @@ async fn handle_workflow_run_command(raw_options : CliOptions) -> Int {
   // Check for third-party actions and prompt for confirmation
   let trust_env = @env.get_env_var("ACTRUN_TRUST").unwrap_or("") == "true"
   if !options.trust_actions && !trust_env && !options.dry_run {
-    let third_party = collect_third_party_actions(filtered_workflow)
+    let third_party = collect_third_party_actions(
+      filtered_workflow,
+      workspace_root=execution_root,
+    )
     if third_party.length() > 0 {
       println("The following third-party actions will be fetched and executed:")
       for action_ref in third_party {

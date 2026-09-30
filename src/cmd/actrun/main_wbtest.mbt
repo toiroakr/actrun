@@ -5307,3 +5307,30 @@ async test "collect_third_party_actions: a third-party action nested under self-
     ),
   )
 }
+
+///|
+async test "collect_third_party_actions: a relative action inside a composite is scanned from the composite's directory" {
+  let workspace = "_build/wbtest-third-party-relative"
+  ignore(run_command("rm", ["-rf", workspace], cwd="."))
+  ignore(
+    run_command(
+      "sh",
+      [
+        "-c", "mkdir -p \"$1/wrapper/inner\" && printf 'runs:\\n  using: composite\\n  steps:\\n    - uses: ./inner\\n' > \"$1/wrapper/action.yml\" && printf 'runs:\\n  using: composite\\n  steps:\\n    - uses: third-party/action@v1\\n' > \"$1/wrapper/inner/action.yml\"",
+        "sh", workspace,
+      ],
+      cwd=".",
+    ),
+  )
+  let workflow = @ar.new_workflow("ci", [
+    @ar.new_job("build", [@ar.new_uses_step("wrap", "$/wrapper")]),
+  ])
+  let found = collect_third_party_actions(workflow, workspace_root=workspace)
+  ignore(run_command("rm", ["-rf", workspace], cwd="."))
+  @debug.debug_inspect(
+    found,
+    content=(
+      #|["third-party/action@v1 (via $/wrapper)"]
+    ),
+  )
+}
