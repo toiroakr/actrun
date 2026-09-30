@@ -147,8 +147,16 @@ async fn resolve_command_on_path(
   search_path? : String? = None,
   cwd? : String = ".",
 ) -> String {
-  if command.contains("/") {
+  if command.has_prefix("/") {
     return command
+  }
+  if command.contains("/") {
+    let (code, stdout, _) = run_command(
+      "sh",
+      ["-c", "printf '%s/%s' \"$PWD\" \"${1#./}\"", "sh", command],
+      cwd=".",
+    )
+    return if code == 0 { stdout } else { command }
   }
   let script = "p=$(command -v -- \"$1\") || exit 1; case $p in /*) ;; */*) p=\"$PWD/$p\" ;; esac; printf '%s' \"$p\""
   let (code, stdout, _) = match search_path {

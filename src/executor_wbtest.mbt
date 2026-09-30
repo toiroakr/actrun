@@ -497,3 +497,16 @@ async test "resolve_command_on_path: a relative PATH entry is resolved against t
   )
   wbtest_cleanup(workspace)
 }
+
+///|
+async test "resolve_command_on_path: a relative path to an executable is returned as an absolute path" {
+  let relative_bin = "_build/wbtest-relative-node-bin"
+  let _ = wbtest_run("mkdir", ["-p", relative_bin])
+  let resolved = resolve_command_on_path("./" + relative_bin + "/node")
+  let _ = wbtest_run("rm", ["-rf", relative_bin])
+  assert_true(
+    resolved.has_prefix("/") &&
+    resolved.has_suffix("/" + relative_bin + "/node") &&
+    !resolved.contains("/./"),
+  )
+}
