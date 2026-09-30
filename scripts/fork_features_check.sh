@@ -40,15 +40,25 @@ failed=0
 for dir in "$FEATURES_DIR"/*/; do
   id="$(sed -n 's/^id=//p' "$dir/feature.txt")"
   work="$(mktemp -d)"
-  cp -R "$dir/." "$work/"
+  if ! (
+    set -e
+    cp -R "$dir/." "$work/"
+    cd "$work"
+    git init -q
+    git add -A
+    git -c user.name=fork-features -c user.email=fork-features@localhost \
+      -c commit.gpgSign=false commit -qm fixture
+  ) >"$LOG_DIR/$id.log" 2>&1; then
+    printf '%s\tfail\n' "$id"
+    echo "fixture preparation failed" >>"$LOG_DIR/$id.log"
+    failed=1
+    rm -rf "$work"
+    continue
+  fi
   (
     cd "$work" &&
-      git init -q &&
-      git add -A &&
-      git -c user.name=fork-features -c user.email=fork-features@localhost \
-        -c commit.gpgSign=false commit -qm fixture &&
       ${with_timeout[@]+"${with_timeout[@]}"} "$@" workflow run .github/workflows/check.yml --trust
-  ) >"$LOG_DIR/$id.log" 2>&1
+  ) >>"$LOG_DIR/$id.log" 2>&1
   if [ "$?" -eq 0 ]; then
     printf '%s\tpass\n' "$id"
   else
