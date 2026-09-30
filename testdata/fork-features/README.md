@@ -10,6 +10,7 @@ fork だけが持つ機能ごとに、その機能が効いているかを確か
 - `feature.txt`: `id`（ディレクトリ名と同じ）、`commit`（その機能を入れた fork のコミットの件名）、`summary`（何を保証するか）
 - `.github/workflows/check.yml`: 機能が効いていれば成功し、効いていなければ失敗するワークフロー
 - `check.yml` が使う composite action などの補助ファイル
+- `remote/<owner>/<repo>/`（任意）: `uses: <owner>/<repo>/...@v1` で取得させたいリポジトリの中身。スクリプトがそれぞれを `v1` タグ付きの git リポジトリにして、`ACTRUN_GITHUB_BASE_URL=file://...` で GitHub の代わりに取得させる
 
 `scripts/fork_features_check.sh <actrun のコマンド>` は、各 fixture を一時ディレクトリにコピーして git リポジトリにし、
 `check.yml` を実行して `<id>\t<pass|fail>` を出力する。

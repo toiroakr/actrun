@@ -1,0 +1,6 @@
+name: Greet
+runs:
+  using: composite
+  steps:
+    - run: cat "$GITHUB_ACTION_PATH/message.txt" >> "$GITHUB_WORKSPACE/greet.log"
+      shell: bash

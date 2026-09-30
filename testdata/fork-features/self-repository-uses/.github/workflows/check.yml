@@ -8,3 +8,8 @@ jobs:
       - uses: $/greet
       - uses: ./.github/actions/wrap
       - run: test "$(grep -c '^greeted$' greet.log)" = 2
+      - uses: demo/tools/wrap@v1
+      - run: test "$(tail -n 1 greet.log)" = remote-greeted
+  remote-reusable:
+    needs: check
+    uses: demo/tools/.github/workflows/reusable.yml@v1
