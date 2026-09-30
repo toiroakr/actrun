@@ -25,8 +25,10 @@ tag_commit="$(git ls-remote --tags origin "refs/tags/$tag" | cut -f1)"
 if npm view "$name@$version" version > /dev/null 2>&1; then
   echo "$name@$version is already published"
   if [ -z "$tag_commit" ]; then
-    git tag "$tag" HEAD
-    git push origin "refs/tags/$tag"
+    # Tagging HEAD here could point the tag at a commit that did not produce
+    # the published package.
+    echo "$tag is missing: push it from the commit that $name@$version was published from" >&2
+    exit 1
   fi
 else
   # Point the tag at the commit about to be published, even if a failed

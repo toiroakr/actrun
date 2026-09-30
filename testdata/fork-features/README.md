@@ -57,6 +57,7 @@ fork の CI（`ci.yml` の e2e ジョブ）では、fork 自身のビルドで�
 - main に changeset が入ると、`.github/workflows/release-fork.yml` が「chore: release (fork)」という PR を作る（changesets/action は pre モードのとき、設定したタイトルの末尾に pre のタグ名を付ける）。この PR は `package.json` の版を上げて `CHANGELOG.md` に追記する
 - その PR をマージすると、`scripts/release_publish.sh` がそのコミットに `v<版>` のタグを付けてから npm に `latest` の dist-tag で公開し、`CHANGELOG.md` の `## <版>` の節を本文にしてそのタグの GitHub Release を作る。済んでいる手順は飛ばすので、途中で失敗しても次に main へ push されたときに残りが実行される。まだ npm に公開していない版のタグは、公開の直前にそのときのコミットへ付け直すので、タグは常に公開したコミットを指す
 - npm への認証は Trusted Publishing（GitHub Actions の OIDC）で行い、npm の token は使わない
+- upstream の `.github/workflows/release.yml`（`v*` タグでバイナリ・Docker イメージを公開する）は、この fork では GitHub 上で無効化しておく（`gh workflow disable release.yml`）。`scripts/release_publish.sh` が `GITHUB_TOKEN` で push するタグでは起動しないが、手でタグを push すると起動してしまうため
 
 ## 機能を追加したとき
 
