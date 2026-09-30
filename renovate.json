@@ -1,0 +1,21 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "enabledManagers": ["custom.regex"],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Upstream mizchi/actrun release that the fork-feature check last ran against",
+      "managerFilePatterns": ["/^testdata/fork-features/upstream\\.txt$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\nversion=(?<currentValue>\\S+)"
+      ]
+    }
+  ],
+  "packageRules": [
+    {
+      "matchDepNames": ["mizchi/actrun"],
+      "commitMessageTopic": "upstream mizchi/actrun",
+      "labels": ["upstream"]
+    }
+  ]
+}
