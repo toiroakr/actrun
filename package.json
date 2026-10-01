@@ -12,7 +12,7 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "actrun": "./dist/actrun.js"
+    "actrun": "dist/actrun.js"
   },
   "files": [
     "dist/actrun.js",
