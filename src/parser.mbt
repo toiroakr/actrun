@@ -398,10 +398,11 @@ fn WorkflowYamlParser::parse_block_scalar(
     body.join("\n")
   }
   let line_breaks = match header.chomping {
+    Keep if content_end == 0 => trailing_empty_lines
+    Keep => 1 + trailing_empty_lines
     _ if content_end == 0 => 0
     Strip => 0
     Clip => 1
-    Keep => 1 + trailing_empty_lines
   }
   YamlValue::Str(text + "\n".repeat(line_breaks))
 }

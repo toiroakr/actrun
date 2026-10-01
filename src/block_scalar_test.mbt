@@ -221,3 +221,29 @@ test "a block scalar header may be followed by a comment" {
     Some("echo a"),
   )
 }
+
+///|
+test "a keep-chomped scalar with only empty lines keeps one line break per empty line" {
+  let job = block_scalar_job(
+    (
+      #|on: push
+      #|jobs:
+      #|  b:
+      #|    env:
+      #|      ONE: |+
+      #|
+      #|      TWO: >+
+      #|
+      #|
+      #|      NONE: |-
+      #|
+      #|    runs-on: ubuntu-latest
+      #|    steps:
+      #|      - run: echo b
+    ),
+    "b",
+  )
+  assert_eq(job.env.get("ONE"), Some("\n"))
+  assert_eq(job.env.get("TWO"), Some("\n\n"))
+  assert_eq(job.env.get("NONE"), Some(""))
+}
