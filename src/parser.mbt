@@ -3,6 +3,7 @@ priv struct YamlLine {
   indent : Int
   text : String
   raw : String
+  terminated : Bool
 }
 
 ///|
@@ -75,11 +76,12 @@ fn collect_yaml_lines(text : String, errors : Array[String]) -> Array[YamlLine] 
   let lines : Array[YamlLine] = []
   let mut line_no = 1
   let segments = text.split("\n").to_array()
-  if segments.length() > 0 &&
-    segments[segments.length() - 1].trim(chars=" \t\r").length() == 0 {
+  let ends_with_line_break = segments.length() > 0 &&
+    segments[segments.length() - 1].trim(chars=" \t\r").length() == 0
+  if ends_with_line_break {
     ignore(segments.pop())
   }
-  for line_view in segments {
+  for i, line_view in segments {
     let raw = line_view.to_owned().trim_end(chars="\r").to_owned()
     let indent = count_indent(raw, line_no, errors)
     let content = if indent >= raw.length() {
@@ -87,7 +89,8 @@ fn collect_yaml_lines(text : String, errors : Array[String]) -> Array[YamlLine] 
     } else {
       String::unsafe_substring(raw, start=indent, end=raw.length())
     }
-    lines.push({ indent, text: strip_yaml_comment(content), raw, })
+    let terminated = ends_with_line_break || i < segments.length() - 1
+    lines.push({ indent, text: strip_yaml_comment(content), raw, terminated, })
     line_no += 1
   }
   lines
@@ -359,6 +362,7 @@ fn WorkflowYamlParser::parse_block_scalar(
   header : BlockScalarHeader,
 ) -> YamlValue {
   let scalar_lines : Array[String] = []
+  let mut last_content_terminated = true
   let mut scalar_indent = match header.indentation {
     Some(indentation) => parent_indent + indentation
     None => -1
@@ -389,6 +393,7 @@ fn WorkflowYamlParser::parse_block_scalar(
       )
     }
     scalar_lines.push(content)
+    last_content_terminated = line.terminated
     self.idx += 1
   }
   let mut content_end = scalar_lines.length()
@@ -403,6 +408,7 @@ fn WorkflowYamlParser::parse_block_scalar(
     body.join("\n")
   }
   let line_breaks = match header.chomping {
+    _ if !last_content_terminated => 0
     Keep if content_end == 0 => trailing_empty_lines
     Keep => 1 + trailing_empty_lines
     _ if content_end == 0 => 0

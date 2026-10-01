@@ -311,3 +311,18 @@ test "a keep-chomped scalar with no content at the end of the file is empty" {
 test "an unterminated whitespace-only last line is not counted as an empty line" {
   assert_eq(block_scalar_env_at_end_of_file("|+\n        a\n  "), Some("a\n"))
 }
+
+///|
+test "content that ends the file without a line break gets no line break" {
+  assert_eq(block_scalar_env_at_end_of_file("|\n        a"), Some("a"))
+  assert_eq(block_scalar_env_at_end_of_file("|+\n        a"), Some("a"))
+  assert_eq(
+    block_scalar_env_at_end_of_file(">\n        a\n        b"),
+    Some("a b"),
+  )
+}
+
+///|
+test "content that ends the file with a line break keeps it" {
+  assert_eq(block_scalar_env_at_end_of_file("|\n        a\n"), Some("a\n"))
+}

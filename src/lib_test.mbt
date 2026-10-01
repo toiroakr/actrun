@@ -270,7 +270,7 @@ test "parser: parse push object form and multiline run" {
   @debug.debug_inspect(
     workflow.jobs[1].steps[0].run.unwrap_or(""),
     content=(
-      #|"pnpm install\npnpm lint\n"
+      #|"pnpm install\npnpm lint"
     ),
   )
 }
@@ -3103,7 +3103,7 @@ test "lowering: reusable workflow fills implicit defaults for typed inputs" {
   @debug.debug_inspect(
     capture.script,
     content=(
-      #|"printf '%s|%s|%s' 'false' '0' 'hello' > inner.txt\nprintf 'result=%s' \"$(cat inner.txt)\" >> \"$GITHUB_OUTPUT\"\n"
+      #|"printf '%s|%s|%s' 'false' '0' 'hello' > inner.txt\nprintf 'result=%s' \"$(cat inner.txt)\" >> \"$GITHUB_OUTPUT\""
     ),
   )
 }
