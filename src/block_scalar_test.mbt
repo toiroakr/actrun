@@ -285,3 +285,29 @@ test "a comment line indented less than the content ends the block scalar" {
   assert_eq(job.env.get("X"), Some("hello\n"))
   assert_eq(job.steps.length(), 1)
 }
+
+///|
+fn block_scalar_env_at_end_of_file(scalar : String) -> String? raise {
+  let job = block_scalar_job(
+    "on: push\njobs:\n  b:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo b\n    env:\n      X: " +
+    scalar,
+    "b",
+  )
+  job.env.get("X")
+}
+
+///|
+test "the line break that ends the file is not counted as an empty line" {
+  assert_eq(block_scalar_env_at_end_of_file("|+\n        a\n"), Some("a\n"))
+  assert_eq(block_scalar_env_at_end_of_file("|+\n        a\n\n"), Some("a\n\n"))
+}
+
+///|
+test "a keep-chomped scalar with no content at the end of the file is empty" {
+  assert_eq(block_scalar_env_at_end_of_file("|+\n"), Some(""))
+}
+
+///|
+test "an unterminated whitespace-only last line is not counted as an empty line" {
+  assert_eq(block_scalar_env_at_end_of_file("|+\n        a\n  "), Some("a\n"))
+}

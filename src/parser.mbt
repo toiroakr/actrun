@@ -74,7 +74,12 @@ fn strip_yaml_comment(text : String) -> String {
 fn collect_yaml_lines(text : String, errors : Array[String]) -> Array[YamlLine] {
   let lines : Array[YamlLine] = []
   let mut line_no = 1
-  for line_view in text.split("\n") {
+  let segments = text.split("\n").to_array()
+  if segments.length() > 0 &&
+    segments[segments.length() - 1].trim(chars=" \t\r").length() == 0 {
+    ignore(segments.pop())
+  }
+  for line_view in segments {
     let raw = line_view.to_owned().trim_end(chars="\r").to_owned()
     let indent = count_indent(raw, line_no, errors)
     let content = if indent >= raw.length() {
