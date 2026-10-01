@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.32.0-fork.1
+
+### Patch Changes
+
+- 1a18e0c: Publish from CI with npm trusted publishing for the first time; no package changes.
+
 ## 0.32.0-fork.0
 
 First release of the `@toiroakr/actrun` soft fork, based on upstream `0.32.0`.
