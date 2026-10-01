@@ -3,6 +3,7 @@ priv struct YamlLine {
   indent : Int
   text : String
   raw : String
+  terminated : Bool
 }
 
 ///|
@@ -74,7 +75,13 @@ fn strip_yaml_comment(text : String) -> String {
 fn collect_yaml_lines(text : String, errors : Array[String]) -> Array[YamlLine] {
   let lines : Array[YamlLine] = []
   let mut line_no = 1
-  for line_view in text.split("\n") {
+  let segments = text.split("\n").to_array()
+  let ends_with_line_break = segments.length() > 0 &&
+    segments[segments.length() - 1].trim(chars="\r").length() == 0
+  if ends_with_line_break {
+    ignore(segments.pop())
+  }
+  for i, line_view in segments {
     let raw = line_view.to_owned().trim_end(chars="\r").to_owned()
     let indent = count_indent(raw, line_no, errors)
     let content = if indent >= raw.length() {
@@ -82,7 +89,8 @@ fn collect_yaml_lines(text : String, errors : Array[String]) -> Array[YamlLine] 
     } else {
       String::unsafe_substring(raw, start=indent, end=raw.length())
     }
-    lines.push({ indent, text: strip_yaml_comment(content), raw, })
+    let terminated = ends_with_line_break || i < segments.length() - 1
+    lines.push({ indent, text: strip_yaml_comment(content), raw, terminated, })
     line_no += 1
   }
   lines
@@ -280,17 +288,100 @@ fn parse_inline_value(text : String) -> YamlValue {
 }
 
 ///|
+priv enum BlockScalarChomping {
+  Strip
+  Clip
+  Keep
+}
+
+///|
+priv struct BlockScalarHeader {
+  folded : Bool
+  chomping : BlockScalarChomping
+  indentation : Int?
+}
+
+///|
+fn parse_block_scalar_header(text : String) -> BlockScalarHeader? {
+  if text.length() == 0 {
+    return None
+  }
+  let folded = match text.unsafe_get(0) {
+    '|' => false
+    '>' => true
+    _ => return None
+  }
+  let mut chomping : BlockScalarChomping? = None
+  let mut indentation : Int? = None
+  for i in 1..<text.length() {
+    match text.unsafe_get(i) {
+      '-' if chomping is None => chomping = Some(Strip)
+      '+' if chomping is None => chomping = Some(Keep)
+      '1'..='9' as digit if indentation is None =>
+        indentation = Some(digit.to_int() - '0'.to_int())
+      _ => return None
+    }
+  }
+  Some({ folded, chomping: chomping.unwrap_or(Clip), indentation, })
+}
+
+///|
+fn fold_block_scalar_lines(lines : ArrayView[String]) -> String {
+  let out = StringBuilder()
+  let mut empty_lines = 0
+  let mut previous_more_indented : Bool? = None
+  for line in lines {
+    if line.length() == 0 {
+      empty_lines += 1
+      continue
+    }
+    let more_indented = line.has_prefix(" ") || line.has_prefix("\t")
+    match previous_more_indented {
+      None => out.write_string("\n".repeat(empty_lines))
+      Some(false) if !more_indented =>
+        out.write_string(
+          if empty_lines == 0 {
+            " "
+          } else {
+            "\n".repeat(empty_lines)
+          },
+        )
+      Some(_) => out.write_string("\n".repeat(empty_lines + 1))
+    }
+    out.write_string(line)
+    previous_more_indented = Some(more_indented)
+    empty_lines = 0
+  }
+  out.to_string()
+}
+
+///|
 fn WorkflowYamlParser::parse_block_scalar(
   self : WorkflowYamlParser,
   parent_indent : Int,
-  folded : Bool,
+  header : BlockScalarHeader,
 ) -> YamlValue {
   let scalar_lines : Array[String] = []
-  let mut scalar_indent = -1
+  let mut last_content_terminated = true
+  let mut scalar_indent = match header.indentation {
+    Some(indentation) => parent_indent + indentation
+    None => -1
+  }
   while self.idx < self.lines.length() {
     let line = self.lines[self.idx]
-    if line.text.length() == 0 {
-      scalar_lines.push("")
+    if line.indent >= line.raw.length() {
+      if scalar_indent >= 0 && line.raw.length() > scalar_indent {
+        scalar_lines.push(
+          String::unsafe_substring(
+            line.raw,
+            start=scalar_indent,
+            end=line.raw.length(),
+          ),
+        )
+        last_content_terminated = line.terminated
+      } else if line.terminated {
+        scalar_lines.push("")
+      }
       self.idx += 1
       continue
     }
@@ -313,15 +404,29 @@ fn WorkflowYamlParser::parse_block_scalar(
       )
     }
     scalar_lines.push(content)
+    last_content_terminated = line.terminated
     self.idx += 1
   }
-  YamlValue::Str(
-    if folded {
-      scalar_lines.join(" ")
-    } else {
-      scalar_lines.join("\n")
-    },
-  )
+  let mut content_end = scalar_lines.length()
+  while content_end > 0 && scalar_lines[content_end - 1].length() == 0 {
+    content_end -= 1
+  }
+  let trailing_empty_lines = scalar_lines.length() - content_end
+  let body = scalar_lines[:content_end]
+  let text = if header.folded {
+    fold_block_scalar_lines(body)
+  } else {
+    body.join("\n")
+  }
+  let line_breaks = match header.chomping {
+    _ if !last_content_terminated => 0
+    Keep if content_end == 0 => trailing_empty_lines
+    Keep => 1 + trailing_empty_lines
+    _ if content_end == 0 => 0
+    Strip => 0
+    Clip => 1
+  }
+  YamlValue::Str(text + "\n".repeat(line_breaks))
 }
 
 ///|
@@ -335,12 +440,10 @@ fn WorkflowYamlParser::parse_mapping_entry(
       let key = unquote_yaml_string(raw_key)
       match value_text {
         Some(value) =>
-          if value == "|" {
-            Some((key, self.parse_block_scalar(expected_indent, false)))
-          } else if value == ">" {
-            Some((key, self.parse_block_scalar(expected_indent, true)))
-          } else {
-            Some((key, parse_inline_value(value)))
+          match parse_block_scalar_header(value) {
+            Some(header) =>
+              Some((key, self.parse_block_scalar(expected_indent, header)))
+            None => Some((key, parse_inline_value(value)))
           }
         None => {
           let saved = self.idx

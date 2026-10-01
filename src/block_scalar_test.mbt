@@ -1,0 +1,366 @@
+///|
+fn block_scalar_job(yaml : String, id : String) -> JobSpec raise {
+  let parsed = parse_workflow_yaml(yaml)
+  guard parsed.workflow is Some(workflow) else {
+    fail(parsed.errors.join("\n"))
+  }
+  for job in workflow.jobs {
+    if job.id == id {
+      return job
+    }
+  }
+  fail("missing job: " + id)
+}
+
+///|
+test "a strip-chomped job if keeps the keys that follow it" {
+  let job = block_scalar_job(
+    (
+      #|on: push
+      #|jobs:
+      #|  a:
+      #|    runs-on: ubuntu-latest
+      #|    steps:
+      #|      - run: echo a
+      #|  b:
+      #|    needs: a
+      #|    if: |-
+      #|      always() && (
+      #|        needs.a.result == 'success'
+      #|      )
+      #|    runs-on: ubuntu-latest
+      #|    steps:
+      #|      - run: echo b
+    ),
+    "b",
+  )
+  assert_eq(job.if_condition, "always() && (\n  needs.a.result == 'success'\n)")
+  assert_eq(job.runs_on, ["ubuntu-latest"])
+  assert_eq(job.steps.length(), 1)
+}
+
+///|
+test "a strip-chomped folded job if keeps the keys that follow it" {
+  let job = block_scalar_job(
+    (
+      #|on: push
+      #|jobs:
+      #|  b:
+      #|    if: >-
+      #|      always()
+      #|    runs-on: ubuntu-latest
+      #|    steps:
+      #|      - run: echo b
+    ),
+    "b",
+  )
+  assert_eq(job.if_condition, "always()")
+  assert_eq(job.steps.length(), 1)
+}
+
+///|
+test "a strip-chomped env value keeps the keys that follow it" {
+  let job = block_scalar_job(
+    (
+      #|on: push
+      #|jobs:
+      #|  b:
+      #|    env:
+      #|      X: |-
+      #|        hello
+      #|    runs-on: ubuntu-latest
+      #|    steps:
+      #|      - run: echo b
+    ),
+    "b",
+  )
+  assert_eq(job.env.get("X"), Some("hello"))
+  assert_eq(job.steps.length(), 1)
+}
+
+///|
+test "a strip-chomped step if is read as its body, not as the header" {
+  let job = block_scalar_job(
+    (
+      #|on: push
+      #|jobs:
+      #|  b:
+      #|    runs-on: ubuntu-latest
+      #|    steps:
+      #|      - if: |-
+      #|          always()
+      #|        run: echo b
+      #|      - run: echo c
+    ),
+    "b",
+  )
+  assert_eq(job.steps[0].if_condition, "always()")
+  assert_eq(job.steps[0].run, Some("echo b"))
+  assert_eq(job.steps.length(), 2)
+}
+
+///|
+test "a strip-chomped if as the last key of a job is read as its body" {
+  let job = block_scalar_job(
+    (
+      #|on: push
+      #|jobs:
+      #|  b:
+      #|    runs-on: ubuntu-latest
+      #|    steps:
+      #|      - run: echo b
+      #|    if: |-
+      #|      always()
+    ),
+    "b",
+  )
+  assert_eq(job.if_condition, "always()")
+}
+
+///|
+fn block_scalar_step_run(body : String) -> String? raise {
+  let job = block_scalar_job(
+    "on: push\njobs:\n  b:\n    runs-on: ubuntu-latest\n    steps:\n" +
+    body +
+    "      - run: echo next\n",
+    "b",
+  )
+  job.steps[0].run
+}
+
+///|
+test "a clip-chomped literal ends with exactly one line break" {
+  assert_eq(
+    block_scalar_step_run(
+      (
+        #|      - run: |
+        #|          echo a
+        #|          echo b
+        #|
+        #|
+        #|
+      ),
+    ),
+    Some("echo a\necho b\n"),
+  )
+}
+
+///|
+test "a keep-chomped literal keeps the trailing empty lines" {
+  assert_eq(
+    block_scalar_step_run(
+      (
+        #|      - run: |+
+        #|          echo a
+        #|
+        #|
+      ),
+    ),
+    Some("echo a\n\n"),
+  )
+}
+
+///|
+test "a folded scalar joins lines with spaces and turns empty lines into line breaks" {
+  assert_eq(
+    block_scalar_step_run(
+      (
+        #|      - run: >-
+        #|          echo a
+        #|          b
+        #|
+        #|          echo c
+        #|
+      ),
+    ),
+    Some("echo a b\necho c"),
+  )
+}
+
+///|
+test "a folded scalar keeps the line breaks around more-indented lines" {
+  assert_eq(
+    block_scalar_step_run(
+      (
+        #|      - run: >-
+        #|          a
+        #|            b
+        #|          c
+        #|
+      ),
+    ),
+    Some("a\n  b\nc"),
+  )
+}
+
+///|
+test "an indentation indicator keeps the leading spaces of the first line" {
+  assert_eq(
+    block_scalar_step_run(
+      (
+        #|      - run: |2-
+        #|            indented
+        #|          base
+        #|
+      ),
+    ),
+    Some("  indented\nbase"),
+  )
+}
+
+///|
+test "a block scalar header may be followed by a comment" {
+  assert_eq(
+    block_scalar_step_run(
+      (
+        #|      - run: |- # note
+        #|          echo a
+        #|
+      ),
+    ),
+    Some("echo a"),
+  )
+}
+
+///|
+test "a keep-chomped scalar with only empty lines keeps one line break per empty line" {
+  let job = block_scalar_job(
+    (
+      #|on: push
+      #|jobs:
+      #|  b:
+      #|    env:
+      #|      ONE: |+
+      #|
+      #|      TWO: >+
+      #|
+      #|
+      #|      NONE: |-
+      #|
+      #|    runs-on: ubuntu-latest
+      #|    steps:
+      #|      - run: echo b
+    ),
+    "b",
+  )
+  assert_eq(job.env.get("ONE"), Some("\n"))
+  assert_eq(job.env.get("TWO"), Some("\n\n"))
+  assert_eq(job.env.get("NONE"), Some(""))
+}
+
+///|
+test "lines starting with # inside a block scalar are content, not comments" {
+  assert_eq(
+    block_scalar_step_run(
+      (
+        #|      - run: |
+        #|          # install
+        #|          cat <<EOF > out.md
+        #|          # Title
+        #|          EOF
+        #|
+      ),
+    ),
+    Some("# install\ncat <<EOF > out.md\n# Title\nEOF\n"),
+  )
+}
+
+///|
+test "a comment line indented less than the content ends the block scalar" {
+  let job = block_scalar_job(
+    (
+      #|on: push
+      #|jobs:
+      #|  b:
+      #|    env:
+      #|      X: |
+      #|        hello
+      #|    # a comment
+      #|    runs-on: ubuntu-latest
+      #|    steps:
+      #|      - run: echo b
+    ),
+    "b",
+  )
+  assert_eq(job.env.get("X"), Some("hello\n"))
+  assert_eq(job.steps.length(), 1)
+}
+
+///|
+fn block_scalar_env_at_end_of_file(scalar : String) -> String? raise {
+  let job = block_scalar_job(
+    "on: push\njobs:\n  b:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo b\n    env:\n      X: " +
+    scalar,
+    "b",
+  )
+  job.env.get("X")
+}
+
+///|
+test "the line break that ends the file is not counted as an empty line" {
+  assert_eq(block_scalar_env_at_end_of_file("|+\n        a\n"), Some("a\n"))
+  assert_eq(block_scalar_env_at_end_of_file("|+\n        a\n\n"), Some("a\n\n"))
+}
+
+///|
+test "a keep-chomped scalar with no content at the end of the file is empty" {
+  assert_eq(block_scalar_env_at_end_of_file("|+\n"), Some(""))
+}
+
+///|
+test "an unterminated whitespace-only last line is not counted as an empty line" {
+  assert_eq(block_scalar_env_at_end_of_file("|+\n        a\n  "), Some("a\n"))
+}
+
+///|
+test "content that ends the file without a line break gets no line break" {
+  assert_eq(block_scalar_env_at_end_of_file("|\n        a"), Some("a"))
+  assert_eq(block_scalar_env_at_end_of_file("|+\n        a"), Some("a"))
+  assert_eq(
+    block_scalar_env_at_end_of_file(">\n        a\n        b"),
+    Some("a b"),
+  )
+}
+
+///|
+test "content that ends the file with a line break keeps it" {
+  assert_eq(block_scalar_env_at_end_of_file("|\n        a\n"), Some("a\n"))
+}
+
+///|
+test "spaces beyond the content indentation on a whitespace-only line are content" {
+  assert_eq(
+    block_scalar_step_run(
+      "      - run: |\n          a\n            \n          b\n",
+    ),
+    Some("a\n  \nb\n"),
+  )
+  assert_eq(
+    block_scalar_step_run(
+      "      - run: >\n          a\n            \n          b\n",
+    ),
+    Some("a\n  \nb\n"),
+  )
+}
+
+///|
+test "a whitespace-only line within the content indentation is an empty line" {
+  assert_eq(
+    block_scalar_step_run(
+      "      - run: |\n          a\n          \n          b\n",
+    ),
+    Some("a\n\nb\n"),
+  )
+}
+
+///|
+test "spaces beyond the content indentation on an unterminated last line are content" {
+  assert_eq(
+    block_scalar_env_at_end_of_file("|2-\n        a\n         "),
+    Some("a\n "),
+  )
+  assert_eq(
+    block_scalar_env_at_end_of_file("|\n        a\n          "),
+    Some("a\n  "),
+  )
+}
