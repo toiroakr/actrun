@@ -247,3 +247,41 @@ test "a keep-chomped scalar with only empty lines keeps one line break per empty
   assert_eq(job.env.get("TWO"), Some("\n\n"))
   assert_eq(job.env.get("NONE"), Some(""))
 }
+
+///|
+test "lines starting with # inside a block scalar are content, not comments" {
+  assert_eq(
+    block_scalar_step_run(
+      (
+        #|      - run: |
+        #|          # install
+        #|          cat <<EOF > out.md
+        #|          # Title
+        #|          EOF
+        #|
+      ),
+    ),
+    Some("# install\ncat <<EOF > out.md\n# Title\nEOF\n"),
+  )
+}
+
+///|
+test "a comment line indented less than the content ends the block scalar" {
+  let job = block_scalar_job(
+    (
+      #|on: push
+      #|jobs:
+      #|  b:
+      #|    env:
+      #|      X: |
+      #|        hello
+      #|    # a comment
+      #|    runs-on: ubuntu-latest
+      #|    steps:
+      #|      - run: echo b
+    ),
+    "b",
+  )
+  assert_eq(job.env.get("X"), Some("hello\n"))
+  assert_eq(job.steps.length(), 1)
+}

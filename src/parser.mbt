@@ -360,7 +360,7 @@ fn WorkflowYamlParser::parse_block_scalar(
   }
   while self.idx < self.lines.length() {
     let line = self.lines[self.idx]
-    if line.text.length() == 0 {
+    if line.indent >= line.raw.length() {
       scalar_lines.push("")
       self.idx += 1
       continue
