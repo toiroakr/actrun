@@ -5393,3 +5393,84 @@ async test "collect_third_party_actions: composites used from local reusable wor
     ),
   )
 }
+
+///|
+test "cli: a shorthand argument that is not a workflow file is an unknown command" {
+  @debug.assert_eq(
+    shorthand_command_error("version"),
+    Some("unknown command: version"),
+  )
+  @debug.assert_eq(shorthand_command_error("ci.yml"), None)
+  @debug.assert_eq(shorthand_command_error(".github/workflows/ci.yaml"), None)
+}
+
+///|
+#cfg(target="native")
+async test "workflow run: a missing workflow file fails before creating a workspace" {
+  let repo_root = setup_workspace_test_repo("ws-missing-workflow")
+  let workspace_base = "_build/test-main/ws-missing-workflow-out"
+  remove_main_test_tree(workspace_base)
+  let options = expect_cli_options(
+    parse_cli_args([
+      "actrun",
+      repo_root + "/.github/workflows/missing.yml",
+      "--workspace",
+      workspace_base,
+    ]),
+  )
+  @debug.assert_eq(handle_workflow_run_command(options), 1)
+  assert_false(@xfs.path_exists(workspace_base))
+}
+
+///|
+#cfg(target="native")
+async test "workflow run: a workflow file the workspace does not contain fails without leaving the workspace" {
+  let repo_root = setup_workspace_test_repo("ws-uncommitted-workflow")
+  ensure_main_test_dir(repo_root + "/.github")
+  ensure_main_test_dir(repo_root + "/.github/workflows")
+  @xfs.write_string_to_file(
+    repo_root + "/.github/workflows/new.yml",
+    "name: new\non: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo a\n",
+  )
+  let workspace_base = "_build/test-main/ws-uncommitted-workflow-out"
+  remove_main_test_tree(workspace_base)
+  ensure_main_test_dir(workspace_base)
+  let options = expect_cli_options(
+    parse_cli_args([
+      "actrun",
+      repo_root + "/.github/workflows/new.yml",
+      "--workspace",
+      workspace_base,
+    ]),
+  )
+  @debug.assert_eq(handle_workflow_run_command(options), 1)
+  @debug.assert_eq(@xfs.read_dir(workspace_base), [])
+}
+
+///|
+#cfg(target="native")
+async test "workflow run: a missing workflow file fails before starting a docker container" {
+  let dir = "_build/test-main/ws-missing-workflow-docker"
+  remove_main_test_tree(dir)
+  ensure_main_test_dir("_build")
+  ensure_main_test_dir("_build/test-main")
+  ensure_main_test_dir(dir)
+  let marker = main_test_absolute_path(dir) + "/docker-called"
+  let fake_docker = main_test_absolute_path(dir) + "/fake-docker"
+  @xfs.write_string_to_file(fake_docker, "#!/bin/sh\ntouch '" + marker + "'\n")
+  let (chmod_code, _, _) = @process.collect_output("chmod", ["+x", fake_docker])
+  @debug.assert_eq(chmod_code, 0)
+  let previous = main_test_set_env_var("ACTRUN_CONTAINER_RUNTIME", fake_docker)
+  let options = expect_cli_options(
+    parse_cli_args([
+      "actrun",
+      dir + "/.github/workflows/missing.yml",
+      "--workspace-mode",
+      "docker",
+    ]),
+  )
+  let code = handle_workflow_run_command(options)
+  main_test_restore_env_var("ACTRUN_CONTAINER_RUNTIME", previous)
+  @debug.assert_eq(code, 1)
+  assert_false(@xfs.path_exists(marker))
+}
