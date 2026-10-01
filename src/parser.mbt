@@ -77,7 +77,7 @@ fn collect_yaml_lines(text : String, errors : Array[String]) -> Array[YamlLine] 
   let mut line_no = 1
   let segments = text.split("\n").to_array()
   let ends_with_line_break = segments.length() > 0 &&
-    segments[segments.length() - 1].trim(chars=" \t\r").length() == 0
+    segments[segments.length() - 1].trim(chars="\r").length() == 0
   if ends_with_line_break {
     ignore(segments.pop())
   }
@@ -370,17 +370,18 @@ fn WorkflowYamlParser::parse_block_scalar(
   while self.idx < self.lines.length() {
     let line = self.lines[self.idx]
     if line.indent >= line.raw.length() {
-      scalar_lines.push(
-        if scalar_indent >= 0 && line.raw.length() > scalar_indent {
+      if scalar_indent >= 0 && line.raw.length() > scalar_indent {
+        scalar_lines.push(
           String::unsafe_substring(
             line.raw,
             start=scalar_indent,
             end=line.raw.length(),
-          )
-        } else {
-          ""
-        },
-      )
+          ),
+        )
+        last_content_terminated = line.terminated
+      } else if line.terminated {
+        scalar_lines.push("")
+      }
       self.idx += 1
       continue
     }

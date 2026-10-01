@@ -352,3 +352,15 @@ test "a whitespace-only line within the content indentation is an empty line" {
     Some("a\n\nb\n"),
   )
 }
+
+///|
+test "spaces beyond the content indentation on an unterminated last line are content" {
+  assert_eq(
+    block_scalar_env_at_end_of_file("|2-\n        a\n         "),
+    Some("a\n "),
+  )
+  assert_eq(
+    block_scalar_env_at_end_of_file("|\n        a\n          "),
+    Some("a\n  "),
+  )
+}
