@@ -5393,3 +5393,56 @@ async test "collect_third_party_actions: composites used from local reusable wor
     ),
   )
 }
+
+///|
+test "cli: a shorthand argument that is not a workflow file is an unknown command" {
+  @debug.assert_eq(
+    shorthand_command_error("version"),
+    Some("unknown command: version"),
+  )
+  @debug.assert_eq(shorthand_command_error("ci.yml"), None)
+  @debug.assert_eq(shorthand_command_error(".github/workflows/ci.yaml"), None)
+}
+
+///|
+#cfg(target="native")
+async test "workflow run: a missing workflow file fails before creating a workspace" {
+  let repo_root = setup_workspace_test_repo("ws-missing-workflow")
+  let workspace_base = "_build/test-main/ws-missing-workflow-out"
+  remove_main_test_tree(workspace_base)
+  let options = expect_cli_options(
+    parse_cli_args([
+      "actrun",
+      repo_root + "/.github/workflows/missing.yml",
+      "--workspace",
+      workspace_base,
+    ]),
+  )
+  @debug.assert_eq(handle_workflow_run_command(options), 1)
+  assert_false(@xfs.path_exists(workspace_base))
+}
+
+///|
+#cfg(target="native")
+async test "workflow run: a workflow file the workspace does not contain fails without leaving the workspace" {
+  let repo_root = setup_workspace_test_repo("ws-uncommitted-workflow")
+  ensure_main_test_dir(repo_root + "/.github")
+  ensure_main_test_dir(repo_root + "/.github/workflows")
+  @xfs.write_string_to_file(
+    repo_root + "/.github/workflows/new.yml",
+    "name: new\non: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo a\n",
+  )
+  let workspace_base = "_build/test-main/ws-uncommitted-workflow-out"
+  remove_main_test_tree(workspace_base)
+  ensure_main_test_dir(workspace_base)
+  let options = expect_cli_options(
+    parse_cli_args([
+      "actrun",
+      repo_root + "/.github/workflows/new.yml",
+      "--workspace",
+      workspace_base,
+    ]),
+  )
+  @debug.assert_eq(handle_workflow_run_command(options), 1)
+  @debug.assert_eq(@xfs.read_dir(workspace_base), [])
+}

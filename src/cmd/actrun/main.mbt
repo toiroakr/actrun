@@ -7650,6 +7650,10 @@ async fn handle_workflow_run_command(raw_options : CliOptions) -> Int {
   } else if workspace_mode == "docker" {
     return run_in_docker_container(options)
   }
+  if options.repo_root is None && !@xfs.path_exists(options.workflow_path) {
+    print_errors(["workflow file not found: " + options.workflow_path])
+    return 1
+  }
 
   let mut workflow_path = options.workflow_path
   let source_root = local_workspace_root(workflow_path)
@@ -7698,6 +7702,45 @@ async fn handle_workflow_run_command(raw_options : CliOptions) -> Int {
         }
       }
     }
+  }
+  let pending_workspace : Ref[LocalWorkspace?] = { val: local_workspace, }
+  defer cleanup_pending_workspace(pending_workspace)
+  run_workflow_in_execution_root(
+    raw_options, config, options, run_started_at_ms, run_root, workspace_mode, workflow_path,
+    source_root, execution_root, pending_workspace,
+  )
+}
+
+///|
+async fn cleanup_pending_workspace(pending : Ref[LocalWorkspace?]) -> Unit {
+  if pending.val is Some(workspace) {
+    pending.val = None
+    cleanup_local_workspace(workspace)
+  }
+}
+
+///|
+async fn run_workflow_in_execution_root(
+  raw_options : CliOptions,
+  config : ActrunConfig,
+  options : CliOptions,
+  run_started_at_ms : UInt64,
+  run_root : String,
+  workspace_mode : String,
+  initial_workflow_path : String,
+  source_root : String,
+  initial_execution_root : String,
+  pending_workspace : Ref[LocalWorkspace?],
+) -> Int {
+  let mut workflow_path = initial_workflow_path
+  let mut execution_root = initial_execution_root
+  if pending_workspace.val is Some(_) && !@xfs.path_exists(workflow_path) {
+    print_errors([
+      "workflow file is not in the workspace: " +
+      options.workflow_path +
+      " (commit it, or pass --include-dirty or --local to run uncommitted changes)",
+    ])
+    return 1
   }
   let base_event = match options.event_path {
     Some(event_path) =>
@@ -8313,10 +8356,7 @@ async fn handle_workflow_run_command(raw_options : CliOptions) -> Int {
   let run_id = run_dir.unwrap_or("")
   print_report(workflow, report, run_id~)
   @ar.cleanup_run_temp_files(execution_root)
-  match local_workspace {
-    Some(ws) => cleanup_local_workspace(ws)
-    None => ()
-  }
+  cleanup_pending_workspace(pending_workspace)
   if !report.ok && !options.watch {
     return 1
   }
@@ -8536,8 +8576,21 @@ async fn main {
     print_errors([usage_text()])
     @xsys.exit(1)
   }
+  if shorthand_command_error(options.workflow_path) is Some(error) {
+    print_errors([error, usage_text()])
+    @xsys.exit(1)
+  }
   let exit_code = handle_workflow_run_command(options)
   if exit_code != 0 {
     @xsys.exit(exit_code)
+  }
+}
+
+///|
+fn shorthand_command_error(workflow_path : String) -> String? {
+  if workflow_path.has_suffix(".yml") || workflow_path.has_suffix(".yaml") {
+    None
+  } else {
+    Some("unknown command: " + workflow_path)
   }
 }
