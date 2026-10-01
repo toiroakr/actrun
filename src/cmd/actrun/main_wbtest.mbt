@@ -5446,3 +5446,31 @@ async test "workflow run: a workflow file the workspace does not contain fails w
   @debug.assert_eq(handle_workflow_run_command(options), 1)
   @debug.assert_eq(@xfs.read_dir(workspace_base), [])
 }
+
+///|
+#cfg(target="native")
+async test "workflow run: a missing workflow file fails before starting a docker container" {
+  let dir = "_build/test-main/ws-missing-workflow-docker"
+  remove_main_test_tree(dir)
+  ensure_main_test_dir("_build")
+  ensure_main_test_dir("_build/test-main")
+  ensure_main_test_dir(dir)
+  let marker = main_test_absolute_path(dir) + "/docker-called"
+  let fake_docker = main_test_absolute_path(dir) + "/fake-docker"
+  @xfs.write_string_to_file(fake_docker, "#!/bin/sh\ntouch '" + marker + "'\n")
+  let (chmod_code, _, _) = @process.collect_output("chmod", ["+x", fake_docker])
+  @debug.assert_eq(chmod_code, 0)
+  let previous = main_test_set_env_var("ACTRUN_CONTAINER_RUNTIME", fake_docker)
+  let options = expect_cli_options(
+    parse_cli_args([
+      "actrun",
+      dir + "/.github/workflows/missing.yml",
+      "--workspace-mode",
+      "docker",
+    ]),
+  )
+  let code = handle_workflow_run_command(options)
+  main_test_restore_env_var("ACTRUN_CONTAINER_RUNTIME", previous)
+  @debug.assert_eq(code, 1)
+  assert_false(@xfs.path_exists(marker))
+}

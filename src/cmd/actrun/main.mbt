@@ -7640,6 +7640,10 @@ async fn handle_workflow_run_command(raw_options : CliOptions) -> Int {
   apply_cli_root_overrides(options)
   let run_root = options.run_root.unwrap_or(default_run_root())
   let workspace_mode = effective_workspace_mode(options)
+  if options.repo_root is None && !@xfs.path_exists(options.workflow_path) {
+    print_errors(["workflow file not found: " + options.workflow_path])
+    return 1
+  }
   if options.repo_root is Some(_) {
     if workspace_mode != "tmp" {
       print_errors([
@@ -7649,10 +7653,6 @@ async fn handle_workflow_run_command(raw_options : CliOptions) -> Int {
     }
   } else if workspace_mode == "docker" {
     return run_in_docker_container(options)
-  }
-  if options.repo_root is None && !@xfs.path_exists(options.workflow_path) {
-    print_errors(["workflow file not found: " + options.workflow_path])
-    return 1
   }
 
   let mut workflow_path = options.workflow_path
