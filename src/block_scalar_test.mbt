@@ -326,3 +326,29 @@ test "content that ends the file without a line break gets no line break" {
 test "content that ends the file with a line break keeps it" {
   assert_eq(block_scalar_env_at_end_of_file("|\n        a\n"), Some("a\n"))
 }
+
+///|
+test "spaces beyond the content indentation on a whitespace-only line are content" {
+  assert_eq(
+    block_scalar_step_run(
+      "      - run: |\n          a\n            \n          b\n",
+    ),
+    Some("a\n  \nb\n"),
+  )
+  assert_eq(
+    block_scalar_step_run(
+      "      - run: >\n          a\n            \n          b\n",
+    ),
+    Some("a\n  \nb\n"),
+  )
+}
+
+///|
+test "a whitespace-only line within the content indentation is an empty line" {
+  assert_eq(
+    block_scalar_step_run(
+      "      - run: |\n          a\n          \n          b\n",
+    ),
+    Some("a\n\nb\n"),
+  )
+}
