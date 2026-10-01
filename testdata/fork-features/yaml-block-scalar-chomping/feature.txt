@@ -1,0 +1,3 @@
+id=yaml-block-scalar-chomping
+commit=fix: read block scalars with chomping and indentation indicators
+summary=`|-` / `>-` block scalars keep the keys that follow them, and their values follow the chomping indicator (no trailing line break for `-`) and folding rules

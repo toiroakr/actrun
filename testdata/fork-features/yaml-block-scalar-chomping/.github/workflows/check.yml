@@ -1,0 +1,20 @@
+name: yaml-block-scalar-chomping
+on: push
+jobs:
+  check:
+    if: |-
+      !cancelled() &&
+      github.event_name == 'push'
+    env:
+      STRIPPED: |-
+        hello
+      FOLDED: >-
+        hello
+        world
+    runs-on: ubuntu-latest
+    steps:
+      - if: |-
+          !cancelled()
+        run: |
+          test "$STRIPPED" = hello
+          test "$FOLDED" = "hello world"
