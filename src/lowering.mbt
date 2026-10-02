@@ -3165,6 +3165,20 @@ pub fn lower_push_workflow_in_workspace(
     let mut step_index = 0
     while step_index < job.steps.length() {
       let step = job.steps[step_index]
+      if step.uses is Some(uses) &&
+        uses_matches_skip_pattern(uses, skip_actions) {
+        skipped_steps.push({
+          job_id: job.id,
+          name: if step.name.length() > 0 {
+            step.name
+          } else {
+            uses
+          },
+          uses,
+        })
+        step_index += 1
+        continue
+      }
       let resolved_step_id = default_step_id(step, step_index)
       validate_step_if(job.id, resolved_step_id, step.if_condition, errors)
       validate_continue_on_error(

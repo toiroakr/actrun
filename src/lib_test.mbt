@@ -652,6 +652,44 @@ test "lowering: a step skipped inside a local composite is reported under the na
 }
 
 ///|
+test "lowering: a step skipped by pattern inside a local reusable workflow is left out of the plan and reported" {
+  let workspace = prepare_local_action_workspace("lower-skip-reusable-step")
+  test_ensure_dir(workspace + "/.github")
+  test_ensure_dir(workspace + "/.github/workflows")
+  @xfs.write_string_to_file(
+    workspace + "/.github/workflows/callee.yml",
+    (
+      #|on: workflow_call
+      #|jobs:
+      #|  inner:
+      #|    runs-on: ubuntu-latest
+      #|    steps:
+      #|      - uses: third-party/action@v1
+      #|      - run: echo reusable-done
+    ),
+  )
+  let parsed = parse_workflow_yaml(
+    (
+      #|on: push
+      #|jobs:
+      #|  call:
+      #|    uses: ./.github/workflows/callee.yml
+    ),
+  )
+  let workflow = expect_workflow(parsed)
+  let result = lower_push_workflow_in_workspace(workflow, workspace, skip_actions=[
+    "third-party/action",
+  ])
+  @debug.debug_inspect(result.errors, content="[]")
+  @debug.debug_inspect(
+    result.skipped_steps.map(fn(step) { (step.name, step.uses) }),
+    content=(
+      #|[("third-party/action@v1", "third-party/action@v1")]
+    ),
+  )
+}
+
+///|
 async test "prefetch: an action skipped by pattern inside a local composite is not fetched" {
   let workspace = prepare_local_action_workspace("prefetch-skip-nested-action")
   test_ensure_dir(workspace + "/setup")

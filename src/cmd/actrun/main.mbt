@@ -271,7 +271,7 @@ fn usage_text() -> String {
   "  --before <sha>               Before commit SHA\n" +
   "  --after <sha>                After commit SHA\n" +
   "  --changed <path>             Changed file path (repeatable)\n" +
-  "  --skip-action <pattern>      Skip actions matching pattern, also inside local composite actions (repeatable)\n" +
+  "  --skip-action <pattern>      Skip actions matching pattern, also inside composite actions and reusable workflows (repeatable)\n" +
   "  --dry-run                    Show execution plan without running\n" +
   "  --local                      Shorthand for --workspace-mode local\n" +
   "  --worktree                   Shorthand for --workspace-mode worktree\n" +
