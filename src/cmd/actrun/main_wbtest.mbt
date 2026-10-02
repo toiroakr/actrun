@@ -5456,6 +5456,37 @@ async test "skipped_step_lines: a step skipped in a reusable workflow called fro
 }
 
 ///|
+async test "skipped_step_lines: a job whose own id looks like a matrix row keeps that id" {
+  let workspace = "_build/wbtest-skipped-step-lines-matrix-like-id"
+  ignore(run_command("rm", ["-rf", workspace], cwd="."))
+  ignore(
+    run_command(
+      "sh",
+      [
+        "-c", "mkdir -p \"$1/setup\" && printf 'runs:\\n  using: composite\\n  steps:\\n    - uses: third-party/action@v1\\n' > \"$1/setup/action.yml\"",
+        "sh", workspace,
+      ],
+      cwd=".",
+    ),
+  )
+  let workflow = @ar.new_workflow("ci", [
+    @ar.new_job("release__matrix_2026", [
+      @ar.new_uses_step("setup", "./setup", name="setup"),
+    ]),
+  ])
+  let lowered = @ar.lower_push_workflow_in_workspace(workflow, workspace, skip_actions=[
+    "third-party/action",
+  ])
+  ignore(run_command("rm", ["-rf", workspace], cwd="."))
+  @debug.debug_inspect(
+    skipped_step_lines(lowered),
+    content=(
+      #|["skip  release__matrix_2026/setup / third-party/action@v1 (third-party/action@v1)"]
+    ),
+  )
+}
+
+///|
 async test "collect_third_party_actions: a local action skipped by pattern is not scanned" {
   let workspace = "_build/wbtest-third-party-skipped-local"
   ignore(run_command("rm", ["-rf", workspace], cwd="."))

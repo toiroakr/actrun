@@ -250,6 +250,7 @@ pub fn new_uses_step(
 ///|
 pub struct JobSpec {
   id : String
+  logical_id : String
   name : String
   if_condition : String
   needs : Array[String]
@@ -311,6 +312,7 @@ pub fn new_job(
   services? : Map[String, JobContainerSpec] = Map([]),
   timeout_minutes? : Int = 0,
   environment? : String = "",
+  logical_id? : String = "",
 ) -> JobSpec {
   let actual_container = match container {
     Some(spec) => Some(spec)
@@ -326,6 +328,11 @@ pub fn new_job(
   }
   {
     id,
+    logical_id: if logical_id.length() > 0 {
+      logical_id
+    } else {
+      id
+    },
     name,
     if_condition,
     needs,

@@ -1233,36 +1233,13 @@ fn substitute_matrix_job(
     services=job.services,
     container=job.container,
     timeout_minutes=job.timeout_minutes,
+    logical_id=job.logical_id,
   )
 }
 
 ///|
 fn matrix_job_id(logical_id : String, index : Int) -> String {
   logical_id + "__matrix_" + (index + 1).to_string()
-}
-
-///|
-fn logical_job_id(job_id : String) -> String {
-  let marker = "__matrix_"
-  let result = StringBuilder()
-  let mut index = 0
-  while index < job_id.length() {
-    if job_id
-      .unsafe_substring(start=index, end=job_id.length())
-      .has_prefix(marker) {
-      let mut end_ = index + marker.length()
-      while end_ < job_id.length() && job_id[end_] >= '0' && job_id[end_] <= '9' {
-        end_ += 1
-      }
-      if end_ > index + marker.length() {
-        index = end_
-        continue
-      }
-    }
-    result.write_char(job_id[index].unsafe_to_char())
-    index += 1
-  }
-  result.to_string()
 }
 
 ///|
@@ -1388,6 +1365,7 @@ fn expand_matrix_jobs(
             reusable_workflow_inherit_secrets=job.reusable_workflow_inherit_secrets,
             services=job.services,
             container=job.container,
+            logical_id=job.logical_id,
           ),
           visible_needs: job.needs,
           need_targets,
@@ -1831,6 +1809,7 @@ fn expand_reusable_workflows_in_workspace(
                       reusable_workflow_inherit_secrets=callee_job.reusable_workflow_inherit_secrets,
                       services=callee_job.services,
                       container=callee_job.container,
+                      logical_id=reusable_job_id(job.logical_id, callee_job.id),
                     ),
                   )
                 }
@@ -2742,7 +2721,7 @@ fn lower_local_action(
         outer_step.uses.unwrap_or(outer_name)
       }
       skipped_steps.push({
-        job_id: logical_job_id(job.id),
+        job_id: job.logical_id,
         name: outer_label + " / " + inner_name,
         uses,
       })
@@ -3208,7 +3187,7 @@ pub fn lower_push_workflow_in_workspace(
       if step.uses is Some(uses) &&
         uses_matches_skip_pattern(uses, skip_actions) {
         skipped_steps.push({
-          job_id: logical_job_id(job.id),
+          job_id: job.logical_id,
           name: if step.name.length() > 0 {
             step.name
           } else {
