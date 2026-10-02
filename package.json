@@ -1,6 +1,6 @@
 {
   "name": "@toiroakr/actrun",
-  "version": "0.32.0-fork.1",
+  "version": "0.32.0-fork.2",
   "description": "A local GitHub Actions runner (a soft fork of @mizchi/actrun)",
   "type": "module",
   "exports": {

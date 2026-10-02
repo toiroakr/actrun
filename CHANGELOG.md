@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.32.0-fork.2
+
+### Patch Changes
+
+- afc778f: `actrun <arg>` now reports `unknown command: <arg>` with the usage when `<arg>` is not a `.yml` / `.yaml` path, instead of trying to run it as a workflow file. A workflow file that does not exist now fails with `workflow file not found: <path>` before any workspace is created, and a workflow file missing from the worktree/tmp workspace (for example, not committed yet) fails with a hint to commit it or pass `--include-dirty` / `--local`. A workspace is now removed even when the run stops early with an error.
+- 6da97c9: Read YAML block scalars with chomping and indentation indicators (`|-`, `>-`, `|+`, `|2-`, ...) in workflows. A key such as `if: |-` no longer drops the keys that follow it (`jobs.<id>.steps is required`) or reads `|-` itself as its value. Block scalar values now end with the line breaks their chomping indicator asks for, so a plain `run: |` script ends with one line break as on GitHub Actions, folded scalars (`>`) fold lines as YAML specifies, and lines starting with `#` inside a block scalar stay in its value instead of becoming empty lines.
+
 ## 0.32.0-fork.1
 
 ### Patch Changes
