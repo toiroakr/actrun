@@ -5416,6 +5416,46 @@ async test "skipped_step_lines: a step skipped in every combination of a matrix 
 }
 
 ///|
+async test "skipped_step_lines: a step skipped in a reusable workflow called from a matrix job is shown once under the job name" {
+  let workspace = "_build/wbtest-skipped-step-lines-matrix-reusable"
+  ignore(run_command("rm", ["-rf", workspace], cwd="."))
+  ignore(
+    run_command(
+      "sh",
+      [
+        "-c", "mkdir -p \"$1/.github/workflows\" && printf 'on: workflow_call\\njobs:\\n  inner:\\n    runs-on: ubuntu-latest\\n    steps:\\n      - uses: third-party/action@v1\\n' > \"$1/.github/workflows/callee.yml\"",
+        "sh", workspace,
+      ],
+      cwd=".",
+    ),
+  )
+  let parsed = @ar.parse_workflow_yaml(
+    (
+      #|on: push
+      #|jobs:
+      #|  call:
+      #|    strategy:
+      #|      matrix:
+      #|        os: [a, b]
+      #|    uses: ./.github/workflows/callee.yml
+    ),
+  )
+  guard parsed.workflow is Some(workflow) else {
+    fail("workflow did not parse")
+  }
+  let lowered = @ar.lower_push_workflow_in_workspace(workflow, workspace, skip_actions=[
+    "third-party/action",
+  ])
+  ignore(run_command("rm", ["-rf", workspace], cwd="."))
+  @debug.debug_inspect(
+    skipped_step_lines(lowered),
+    content=(
+      #|["skip  call__inner/third-party/action@v1 (third-party/action@v1)"]
+    ),
+  )
+}
+
+///|
 async test "collect_third_party_actions: a local action skipped by pattern is not scanned" {
   let workspace = "_build/wbtest-third-party-skipped-local"
   ignore(run_command("rm", ["-rf", workspace], cwd="."))

@@ -5733,10 +5733,7 @@ fn is_trusted_action_owner(uses : String) -> Bool {
 fn skipped_step_lines(lowered : @ar.LoweringResult) -> Array[String] {
   let lines : Array[String] = []
   for step in lowered.skipped_steps {
-    let job_id = lowered.plan.job_matrix_groups
-      .get(step.job_id)
-      .unwrap_or(step.job_id)
-    let line = "skip  " + job_id + "/" + step.name + " (" + step.uses + ")"
+    let line = "skip  " + step.job_id + "/" + step.name + " (" + step.uses + ")"
     if !lines.contains(line) {
       lines.push(line)
     }

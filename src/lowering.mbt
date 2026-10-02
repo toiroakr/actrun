@@ -1242,6 +1242,30 @@ fn matrix_job_id(logical_id : String, index : Int) -> String {
 }
 
 ///|
+fn logical_job_id(job_id : String) -> String {
+  let marker = "__matrix_"
+  let result = StringBuilder()
+  let mut index = 0
+  while index < job_id.length() {
+    if job_id
+      .unsafe_substring(start=index, end=job_id.length())
+      .has_prefix(marker) {
+      let mut end_ = index + marker.length()
+      while end_ < job_id.length() && job_id[end_] >= '0' && job_id[end_] <= '9' {
+        end_ += 1
+      }
+      if end_ > index + marker.length() {
+        index = end_
+        continue
+      }
+    }
+    result.write_char(job_id[index].unsafe_to_char())
+    index += 1
+  }
+  result.to_string()
+}
+
+///|
 fn expanded_job_ids(jobs : Array[JobSpec]) -> Map[String, Array[String]] {
   let result : Map[String, Array[String]] = Map([])
   for job in jobs {
@@ -2718,7 +2742,7 @@ fn lower_local_action(
         outer_step.uses.unwrap_or(outer_name)
       }
       skipped_steps.push({
-        job_id: job.id,
+        job_id: logical_job_id(job.id),
         name: outer_label + " / " + inner_name,
         uses,
       })
@@ -3184,7 +3208,7 @@ pub fn lower_push_workflow_in_workspace(
       if step.uses is Some(uses) &&
         uses_matches_skip_pattern(uses, skip_actions) {
         skipped_steps.push({
-          job_id: job.id,
+          job_id: logical_job_id(job.id),
           name: if step.name.length() > 0 {
             step.name
           } else {
