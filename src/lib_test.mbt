@@ -552,6 +552,135 @@ test "lowering: a self-repository action whose name starts with two dots is lowe
 }
 
 ///|
+test "lowering: a step skipped by pattern inside a local composite is left out of the plan" {
+  let workspace = prepare_local_action_workspace("lower-skip-nested-action")
+  test_ensure_dir(workspace + "/setup")
+  @xfs.write_string_to_file(
+    workspace + "/setup/action.yml",
+    (
+      #|name: Setup
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - uses: third-party/action@v1
+      #|    - run: echo composite-done
+      #|      shell: sh
+    ),
+  )
+  let workflow = new_workflow("ci", [
+    new_job("build", [new_uses_step("setup", "./setup")]),
+  ])
+  let result = lower_push_workflow_in_workspace(workflow, workspace, skip_actions=[
+    "third-party/action",
+  ])
+  @debug.debug_inspect(result.errors, content="[]")
+  let scripts = result.plan.tasks.map(fn(task) { task.script })
+  assert_true(scripts.contains("echo composite-done"))
+  assert_true(
+    result.plan.tasks
+    .iter()
+    .all(fn(task) {
+      !task.action
+      .map(fn(action) { action.uses })
+      .unwrap_or("")
+      .contains("third-party/action")
+    }),
+  )
+}
+
+///|
+test "lowering: a step skipped by pattern inside a local composite is reported with its job, name and uses" {
+  let workspace = prepare_local_action_workspace("lower-report-skipped-nested")
+  test_ensure_dir(workspace + "/setup")
+  @xfs.write_string_to_file(
+    workspace + "/setup/action.yml",
+    (
+      #|name: Setup
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - uses: third-party/action@v1
+      #|    - name: Named
+      #|      uses: third-party/action@v2
+      #|    - run: echo composite-done
+      #|      shell: sh
+    ),
+  )
+  let workflow = new_workflow("ci", [
+    new_job("build", [new_uses_step("setup", "./setup")]),
+  ])
+  let result = lower_push_workflow_in_workspace(workflow, workspace, skip_actions=[
+    "third-party/action",
+  ])
+  @debug.debug_inspect(
+    result.skipped_steps.map(fn(step) { (step.job_id, step.name, step.uses) }),
+    content=(
+      #|[
+      #|  ("build", "./setup / third-party/action@v1", "third-party/action@v1"),
+      #|  ("build", "./setup / Named", "third-party/action@v2"),
+      #|]
+    ),
+  )
+}
+
+///|
+test "lowering: a step skipped inside a local composite is reported under the name of the step that uses the composite" {
+  let workspace = prepare_local_action_workspace("lower-report-skipped-named")
+  test_ensure_dir(workspace + "/setup")
+  @xfs.write_string_to_file(
+    workspace + "/setup/action.yml",
+    (
+      #|name: Setup
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - uses: third-party/action@v1
+    ),
+  )
+  let workflow = new_workflow("ci", [
+    new_job("build", [new_uses_step("setup", "./setup", name="Install deps")]),
+  ])
+  let result = lower_push_workflow_in_workspace(workflow, workspace, skip_actions=[
+    "third-party/action",
+  ])
+  @debug.debug_inspect(
+    result.skipped_steps.map(fn(step) { step.name }),
+    content=(
+      #|["Install deps / third-party/action@v1"]
+    ),
+  )
+}
+
+///|
+async test "prefetch: an action skipped by pattern inside a local composite is not fetched" {
+  let workspace = prepare_local_action_workspace("prefetch-skip-nested-action")
+  test_ensure_dir(workspace + "/setup")
+  @xfs.write_string_to_file(
+    workspace + "/setup/action.yml",
+    (
+      #|name: Setup
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - uses: skip-prefetch-owner/never-cached-action@v1
+      #|    - run: echo composite-done
+      #|      shell: sh
+    ),
+  )
+  let workflow = new_workflow("ci", [
+    new_job("build", [new_uses_step("setup", "./setup")]),
+  ])
+  let prefetch = prefetch_workflow_github_actions_native(
+    workflow,
+    workspace,
+    git_bin=Some(workspace + "/no-such-git"),
+    skip_actions=["skip-prefetch-owner/never-cached-action"],
+  )
+  @debug.debug_inspect(prefetch.errors, content="[]")
+  @debug.debug_inspect(prefetch.fetched, content="[]")
+}
+
+///|
 test "lowering: continue-on-error of a nested composite step can use the enclosing inputs" {
   let workspace = prepare_local_action_workspace("lower-nested-coe-inputs")
   test_ensure_dir(workspace + "/wrap")
@@ -3932,6 +4061,32 @@ test "security: malicious step name does not affect execution" {
   )
   let result = lower_push_workflow(workflow)
   @debug.debug_inspect(result.errors, content="[]")
+}
+
+///|
+test "uses_matches_skip_pattern: a uses containing a pattern matches" {
+  @debug.debug_inspect(
+    uses_matches_skip_pattern("pnpm/action-setup@v4", [
+      "actions/checkout", "pnpm/action-setup",
+    ]),
+    content="true",
+  )
+}
+
+///|
+test "uses_matches_skip_pattern: a uses containing no pattern does not match" {
+  @debug.debug_inspect(
+    uses_matches_skip_pattern("pnpm/action-setup@v4", ["actions/checkout"]),
+    content="false",
+  )
+}
+
+///|
+test "uses_matches_skip_pattern: no pattern matches nothing" {
+  @debug.debug_inspect(
+    uses_matches_skip_pattern("pnpm/action-setup@v4", []),
+    content="false",
+  )
 }
 
 ///|

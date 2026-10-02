@@ -5309,6 +5309,137 @@ async test "collect_third_party_actions: a third-party action nested under self-
 }
 
 ///|
+async test "collect_third_party_actions: an action skipped by pattern inside a composite is not reported" {
+  let workspace = "_build/wbtest-third-party-skipped-nested"
+  ignore(run_command("rm", ["-rf", workspace], cwd="."))
+  ignore(
+    run_command(
+      "sh",
+      [
+        "-c", "mkdir -p \"$1/wrapper\" && printf 'runs:\\n  using: composite\\n  steps:\\n    - uses: third-party/action@v1\\n    - uses: other-party/action@v1\\n' > \"$1/wrapper/action.yml\"",
+        "sh", workspace,
+      ],
+      cwd=".",
+    ),
+  )
+  let workflow = @ar.new_workflow("ci", [
+    @ar.new_job("build", [@ar.new_uses_step("wrap", "./wrapper")]),
+  ])
+  let found = collect_third_party_actions(workflow, workspace_root=workspace, skip_actions=[
+    "third-party/action",
+  ])
+  ignore(run_command("rm", ["-rf", workspace], cwd="."))
+  @debug.debug_inspect(
+    found,
+    content=(
+      #|["other-party/action@v1 (via ./wrapper)"]
+    ),
+  )
+}
+
+///|
+async test "skipped_step_lines: a step skipped inside a composite is shown like a skipped workflow step" {
+  let workspace = "_build/wbtest-skipped-step-lines"
+  ignore(run_command("rm", ["-rf", workspace], cwd="."))
+  ignore(
+    run_command(
+      "sh",
+      [
+        "-c", "mkdir -p \"$1/setup\" && printf 'runs:\\n  using: composite\\n  steps:\\n    - uses: third-party/action@v1\\n' > \"$1/setup/action.yml\"",
+        "sh", workspace,
+      ],
+      cwd=".",
+    ),
+  )
+  let workflow = @ar.new_workflow("ci", [
+    @ar.new_job("build", [
+      @ar.new_uses_step("setup", "./setup", name="first"),
+      @ar.new_uses_step("again", "./setup", name="second"),
+    ]),
+  ])
+  let lowered = @ar.lower_push_workflow_in_workspace(workflow, workspace, skip_actions=[
+    "third-party/action",
+  ])
+  ignore(run_command("rm", ["-rf", workspace], cwd="."))
+  @debug.debug_inspect(
+    skipped_step_lines(lowered),
+    content=(
+      #|[
+      #|  "skip  build/first / third-party/action@v1 (third-party/action@v1)",
+      #|  "skip  build/second / third-party/action@v1 (third-party/action@v1)",
+      #|]
+    ),
+  )
+}
+
+///|
+async test "skipped_step_lines: a step skipped in every combination of a matrix job is shown once under the job name" {
+  let workspace = "_build/wbtest-skipped-step-lines-matrix"
+  ignore(run_command("rm", ["-rf", workspace], cwd="."))
+  ignore(
+    run_command(
+      "sh",
+      [
+        "-c", "mkdir -p \"$1/setup\" && printf 'runs:\\n  using: composite\\n  steps:\\n    - uses: third-party/action@v1\\n' > \"$1/setup/action.yml\"",
+        "sh", workspace,
+      ],
+      cwd=".",
+    ),
+  )
+  let parsed = @ar.parse_workflow_yaml(
+    (
+      #|on: push
+      #|jobs:
+      #|  build:
+      #|    runs-on: ubuntu-latest
+      #|    strategy:
+      #|      matrix:
+      #|        os: [a, b]
+      #|    steps:
+      #|      - name: setup
+      #|        uses: ./setup
+    ),
+  )
+  guard parsed.workflow is Some(workflow) else {
+    fail("workflow did not parse")
+  }
+  let lowered = @ar.lower_push_workflow_in_workspace(workflow, workspace, skip_actions=[
+    "third-party/action",
+  ])
+  ignore(run_command("rm", ["-rf", workspace], cwd="."))
+  @debug.debug_inspect(
+    skipped_step_lines(lowered),
+    content=(
+      #|["skip  build/setup / third-party/action@v1 (third-party/action@v1)"]
+    ),
+  )
+}
+
+///|
+async test "collect_third_party_actions: a local action skipped by pattern is not scanned" {
+  let workspace = "_build/wbtest-third-party-skipped-local"
+  ignore(run_command("rm", ["-rf", workspace], cwd="."))
+  ignore(
+    run_command(
+      "sh",
+      [
+        "-c", "mkdir -p \"$1/wrapper\" && printf 'runs:\\n  using: composite\\n  steps:\\n    - uses: third-party/action@v1\\n' > \"$1/wrapper/action.yml\"",
+        "sh", workspace,
+      ],
+      cwd=".",
+    ),
+  )
+  let workflow = @ar.new_workflow("ci", [
+    @ar.new_job("build", [@ar.new_uses_step("wrap", "./wrapper")]),
+  ])
+  let found = collect_third_party_actions(workflow, workspace_root=workspace, skip_actions=[
+    "./wrapper",
+  ])
+  ignore(run_command("rm", ["-rf", workspace], cwd="."))
+  @debug.debug_inspect(found, content="[]")
+}
+
+///|
 async test "collect_third_party_actions: a relative action inside a composite is scanned from the composite's directory" {
   let workspace = "_build/wbtest-third-party-relative"
   ignore(run_command("rm", ["-rf", workspace], cwd="."))

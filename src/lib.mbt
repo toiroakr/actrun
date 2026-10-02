@@ -381,18 +381,22 @@ pub fn step_matches_skip_pattern(
   patterns : Array[String],
 ) -> Bool {
   match step.uses {
-    Some(uses) => {
-      let mut matched = false
-      for pattern in patterns {
-        if uses.contains(pattern) {
-          matched = true
-          break
-        }
-      }
-      matched
-    }
+    Some(uses) => uses_matches_skip_pattern(uses, patterns)
     None => false
   }
+}
+
+///|
+pub fn uses_matches_skip_pattern(
+  uses : String,
+  patterns : Array[String],
+) -> Bool {
+  for pattern in patterns {
+    if uses.contains(pattern) {
+      return true
+    }
+  }
+  false
 }
 
 ///|
@@ -656,6 +660,14 @@ pub struct LoweringResult {
   ir : @wf.FlowIr
   plan : ExecutionPlan
   errors : Array[String]
+  skipped_steps : Array[SkippedStep]
+}
+
+///|
+pub struct SkippedStep {
+  job_id : String
+  name : String
+  uses : String
 }
 
 ///|

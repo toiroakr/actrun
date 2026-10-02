@@ -283,7 +283,11 @@ async fn prefetch_action_uses(
   fetched : Array[String],
   errors : Array[String],
   self_repository_root? : String = ".",
+  skip_actions? : Array[String] = [],
 ) -> Unit {
+  if uses_matches_skip_pattern(uses, skip_actions) {
+    return
+  }
   let parsed = parse_action_ref(uses)
   guard parsed.action is Some(action_ref) else { return }
   match action_ref {
@@ -317,6 +321,7 @@ async fn prefetch_action_uses(
             fetched,
             errors,
             self_repository_root~,
+            skip_actions~,
           )
         }
       }
@@ -360,6 +365,7 @@ async fn prefetch_action_uses(
                 fetched,
                 errors,
                 self_repository_root=layout.repo_root,
+                skip_actions~,
               )
             }
           }
@@ -380,6 +386,7 @@ async fn prefetch_workflow_dependencies(
   visited : Map[String, Bool],
   fetched : Array[String],
   errors : Array[String],
+  skip_actions? : Array[String] = [],
 ) -> Unit {
   for job in workflow.jobs {
     match job.reusable_workflow {
@@ -400,8 +407,14 @@ async fn prefetch_workflow_dependencies(
                 }
                 if parsed.workflow is Some(callee) {
                   prefetch_workflow_dependencies(
-                    callee, workspace_root, git_bin, github_base_url, visited, fetched,
+                    callee,
+                    workspace_root,
+                    git_bin,
+                    github_base_url,
+                    visited,
+                    fetched,
                     errors,
+                    skip_actions~,
                   )
                 }
               }
@@ -436,8 +449,14 @@ async fn prefetch_workflow_dependencies(
                         }
                         if parsed.workflow is Some(callee) {
                           prefetch_workflow_dependencies(
-                            callee, repo_root, git_bin, github_base_url, visited,
-                            fetched, errors,
+                            callee,
+                            repo_root,
+                            git_bin,
+                            github_base_url,
+                            visited,
+                            fetched,
+                            errors,
+                            skip_actions~,
                           )
                         }
                       }
@@ -466,6 +485,7 @@ async fn prefetch_workflow_dependencies(
           visited,
           fetched,
           errors,
+          skip_actions~,
         )
       }
     }
@@ -478,12 +498,20 @@ pub async fn prefetch_workflow_github_actions_native(
   workspace_root : String,
   git_bin? : String? = None,
   github_base_url? : String? = None,
+  skip_actions? : Array[String] = [],
 ) -> GitHubActionPrefetchResult {
   let fetched : Array[String] = []
   let errors : Array[String] = []
   let visited : Map[String, Bool] = Map([])
   prefetch_workflow_dependencies(
-    workflow, workspace_root, git_bin, github_base_url, visited, fetched, errors,
+    workflow,
+    workspace_root,
+    git_bin,
+    github_base_url,
+    visited,
+    fetched,
+    errors,
+    skip_actions~,
   )
   { fetched, errors, }
 }

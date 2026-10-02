@@ -271,7 +271,7 @@ fn usage_text() -> String {
   "  --before <sha>               Before commit SHA\n" +
   "  --after <sha>                After commit SHA\n" +
   "  --changed <path>             Changed file path (repeatable)\n" +
-  "  --skip-action <pattern>      Skip actions matching pattern (repeatable)\n" +
+  "  --skip-action <pattern>      Skip actions matching pattern, also inside local composite actions (repeatable)\n" +
   "  --dry-run                    Show execution plan without running\n" +
   "  --local                      Shorthand for --workspace-mode local\n" +
   "  --worktree                   Shorthand for --workspace-mode worktree\n" +
@@ -5730,13 +5730,35 @@ fn is_trusted_action_owner(uses : String) -> Bool {
 }
 
 ///|
+fn skipped_step_lines(lowered : @ar.LoweringResult) -> Array[String] {
+  let lines : Array[String] = []
+  for step in lowered.skipped_steps {
+    let job_id = lowered.plan.job_matrix_groups
+      .get(step.job_id)
+      .unwrap_or(step.job_id)
+    let line = "skip  " + job_id + "/" + step.name + " (" + step.uses + ")"
+    if !lines.contains(line) {
+      lines.push(line)
+    }
+  }
+  lines
+}
+
+///|
 fn collect_third_party_actions(
   workflow : @ar.WorkflowSpec,
   workspace_root? : String = ".",
+  skip_actions? : Array[String] = [],
 ) -> Array[String] {
   let seen : Map[String, Bool] = Map([])
   let result : Array[String] = []
-  scan_jobs_for_third_party(workflow.jobs, workspace_root, seen, result)
+  scan_jobs_for_third_party(
+    workflow.jobs,
+    workspace_root,
+    seen,
+    result,
+    skip_actions~,
+  )
   result
 }
 
@@ -5746,6 +5768,7 @@ fn scan_jobs_for_third_party(
   workspace_root : String,
   seen : Map[String, Bool],
   result : Array[String],
+  skip_actions? : Array[String] = [],
 ) -> Unit {
   for job in jobs {
     match job.reusable_workflow {
@@ -5766,6 +5789,7 @@ fn scan_jobs_for_third_party(
                   workspace_root,
                   seen,
                   result,
+                  skip_actions~,
                 )
               None => ()
             }
@@ -5776,6 +5800,7 @@ fn scan_jobs_for_third_party(
     }
     for step in job.steps {
       match step.uses {
+        Some(uses) if @ar.uses_matches_skip_pattern(uses, skip_actions) => ()
         Some(uses) => {
           if !is_trusted_action_owner(uses) && !seen.contains(uses) {
             seen[uses] = true
@@ -5788,6 +5813,7 @@ fn scan_jobs_for_third_party(
               seen,
               result,
               workspace_root~,
+              skip_actions~,
             )
           }
         }
@@ -5831,6 +5857,7 @@ fn scan_local_action_manifest(
   seen : Map[String, Bool],
   result : Array[String],
   workspace_root? : String = ".",
+  skip_actions? : Array[String] = [],
   depth? : Int = 0,
 ) -> Unit {
   let action_dir = normalize_scan_path(action_dir)
@@ -5867,6 +5894,9 @@ fn scan_local_action_manifest(
       let uses = String::unsafe_substring(line, start=5, end=line.length())
         .trim(chars=" \t'\"")
         .to_owned()
+      if @ar.uses_matches_skip_pattern(uses, skip_actions) {
+        continue
+      }
       if uses.length() > 0 &&
         !is_trusted_action_owner(uses) &&
         !seen.contains(uses) {
@@ -5885,6 +5915,7 @@ fn scan_local_action_manifest(
           seen,
           result,
           workspace_root~,
+          skip_actions~,
           depth=depth + 1,
         )
       }
@@ -8162,7 +8193,9 @@ async fn run_workflow_in_execution_root(
 
   if options.dump_context {
     let lowered = @ar.lower_push_workflow_in_workspace(
-      filtered_workflow, execution_root,
+      filtered_workflow,
+      execution_root,
+      skip_actions=options.skip_actions,
     )
     if lowered.errors.length() > 0 {
       print_errors(lowered.errors)
@@ -8186,7 +8219,9 @@ async fn run_workflow_in_execution_root(
       println("include_dirty: true (uncommitted changes will be synced)")
     }
     let lowered = @ar.lower_push_workflow_in_workspace(
-      filtered_workflow, execution_root,
+      filtered_workflow,
+      execution_root,
+      skip_actions=options.skip_actions,
     )
     let flow_cache = prepare_flow_cache_plan(lowered, options)
     let cli_args = @ar.cli_args()
@@ -8201,6 +8236,9 @@ async fn run_workflow_in_execution_root(
         },
       )
     } else {
+      for line in skipped_step_lines(lowered) {
+        println(line)
+      }
       if lowered.errors.length() > 0 {
         for err in lowered.errors {
           println("warning: " + err)
@@ -8221,6 +8259,7 @@ async fn run_workflow_in_execution_root(
     let third_party = collect_third_party_actions(
       filtered_workflow,
       workspace_root=execution_root,
+      skip_actions=options.skip_actions,
     )
     if third_party.length() > 0 {
       println("The following third-party actions will be fetched and executed:")
@@ -8267,7 +8306,9 @@ async fn run_workflow_in_execution_root(
     }
   }
   let prefetch = @ar.prefetch_workflow_github_actions_native(
-    filtered_workflow, execution_root,
+    filtered_workflow,
+    execution_root,
+    skip_actions=options.skip_actions,
   )
   if prefetch.errors.length() > 0 {
     print_errors(prefetch.errors)
@@ -8292,8 +8333,12 @@ async fn run_workflow_in_execution_root(
   let lowered = @ar.lower_push_workflow_in_workspace(
     filtered_workflow,
     execution_root,
+    skip_actions=options.skip_actions,
     self_repository_root~,
   )
+  for line in skipped_step_lines(lowered) {
+    println(line)
+  }
   if lowered.errors.length() > 0 {
     remove_self_repository_snapshot(self_repository_root)
     print_errors(lowered.errors)
