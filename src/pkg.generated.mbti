@@ -57,7 +57,7 @@ pub fn local_action_uses_path(String) -> String?
 
 pub fn lower_push_workflow(WorkflowSpec) -> LoweringResult
 
-pub fn lower_push_workflow_in_workspace(WorkflowSpec, String, self_repository_root? : String) -> LoweringResult
+pub fn lower_push_workflow_in_workspace(WorkflowSpec, String, self_repository_root? : String, skip_actions? : Array[String]) -> LoweringResult
 
 pub fn mask_report_secrets(WorkflowRunReport, Array[String]) -> WorkflowRunReport
 
@@ -73,7 +73,7 @@ pub fn new_backend_capabilities(host? : Bool, docker? : Bool, wasm? : Bool) -> B
 
 pub fn new_concurrency_spec(String, cancel_in_progress? : String?) -> ConcurrencySpec
 
-pub fn new_job(String, Array[StepSpec], name? : String, if_condition? : String, needs? : Array[String], outputs? : Map[String, String], permissions? : PermissionsSpec?, concurrency? : ConcurrencySpec?, runs_on? : Array[String], env? : Map[String, String], defaults? : RunDefaults, matrix? : JobMatrixSpec?, reusable_workflow? : String?, reusable_workflow_with? : Map[String, String], reusable_workflow_secrets? : Map[String, String], reusable_workflow_inherit_secrets? : Bool, container? : JobContainerSpec?, container_image? : String?, services? : Map[String, JobContainerSpec], timeout_minutes? : Int, environment? : String) -> JobSpec
+pub fn new_job(String, Array[StepSpec], name? : String, if_condition? : String, needs? : Array[String], outputs? : Map[String, String], permissions? : PermissionsSpec?, concurrency? : ConcurrencySpec?, runs_on? : Array[String], env? : Map[String, String], defaults? : RunDefaults, matrix? : JobMatrixSpec?, reusable_workflow? : String?, reusable_workflow_with? : Map[String, String], reusable_workflow_secrets? : Map[String, String], reusable_workflow_inherit_secrets? : Bool, container? : JobContainerSpec?, container_image? : String?, services? : Map[String, JobContainerSpec], timeout_minutes? : Int, environment? : String, logical_id? : String) -> JobSpec
 
 pub fn new_job_container_credentials_spec(String, String) -> JobContainerCredentialsSpec
 
@@ -125,7 +125,7 @@ pub fn plan_result_to_json(PlanResult) -> String
 
 pub fn plan_workflow(String, workspace_root? : String) -> PlanResult
 
-pub async fn prefetch_workflow_github_actions_native(WorkflowSpec, String, git_bin? : String?, github_base_url? : String?) -> GitHubActionPrefetchResult
+pub async fn prefetch_workflow_github_actions_native(WorkflowSpec, String, git_bin? : String?, github_base_url? : String?, skip_actions? : Array[String]) -> GitHubActionPrefetchResult
 
 pub fn read_sandbox_results(WasmSandbox) -> WasmSandboxResult
 
@@ -163,7 +163,9 @@ pub fn store_summary_path(String, String) -> String
 
 pub fn strip_unsupported_workflow_fields(WorkflowSpec) -> WorkflowSpec
 
-pub fn workflow_uses_self_repository(WorkflowSpec, String) -> Bool
+pub fn uses_matches_skip_pattern(String, Array[String]) -> Bool
+
+pub fn workflow_uses_self_repository(WorkflowSpec, String, skip_actions? : Array[String]) -> Bool
 
 // Errors
 
@@ -266,6 +268,7 @@ pub struct JobMatrixSpec {
 
 pub struct JobSpec {
   id : String
+  logical_id : String
   name : String
   if_condition : String
   needs : Array[String]
@@ -304,6 +307,7 @@ pub struct LoweringResult {
   ir : @workflow.FlowIr
   plan : ExecutionPlan
   errors : Array[String]
+  skipped_steps : Array[SkippedStep]
 }
 
 pub struct PermissionsSpec {
@@ -389,6 +393,12 @@ pub struct ShellEnv {
   is_dir : (String) -> Bool
   mkdir : (String) -> Bool
   remove : (String) -> Bool
+}
+
+pub struct SkippedStep {
+  job_id : String
+  name : String
+  uses : String
 }
 
 pub struct StepSpec {

@@ -250,6 +250,7 @@ pub fn new_uses_step(
 ///|
 pub struct JobSpec {
   id : String
+  logical_id : String
   name : String
   if_condition : String
   needs : Array[String]
@@ -311,6 +312,7 @@ pub fn new_job(
   services? : Map[String, JobContainerSpec] = Map([]),
   timeout_minutes? : Int = 0,
   environment? : String = "",
+  logical_id? : String = "",
 ) -> JobSpec {
   let actual_container = match container {
     Some(spec) => Some(spec)
@@ -326,6 +328,11 @@ pub fn new_job(
   }
   {
     id,
+    logical_id: if logical_id.length() > 0 {
+      logical_id
+    } else {
+      id
+    },
     name,
     if_condition,
     needs,
@@ -381,18 +388,22 @@ pub fn step_matches_skip_pattern(
   patterns : Array[String],
 ) -> Bool {
   match step.uses {
-    Some(uses) => {
-      let mut matched = false
-      for pattern in patterns {
-        if uses.contains(pattern) {
-          matched = true
-          break
-        }
-      }
-      matched
-    }
+    Some(uses) => uses_matches_skip_pattern(uses, patterns)
     None => false
   }
+}
+
+///|
+pub fn uses_matches_skip_pattern(
+  uses : String,
+  patterns : Array[String],
+) -> Bool {
+  for pattern in patterns {
+    if uses.contains(pattern) {
+      return true
+    }
+  }
+  false
 }
 
 ///|
@@ -656,6 +667,14 @@ pub struct LoweringResult {
   ir : @wf.FlowIr
   plan : ExecutionPlan
   errors : Array[String]
+  skipped_steps : Array[SkippedStep]
+}
+
+///|
+pub struct SkippedStep {
+  job_id : String
+  name : String
+  uses : String
 }
 
 ///|

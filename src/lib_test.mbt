@@ -470,6 +470,29 @@ test "self repository detection: a $/ step nested in a local composite uses the 
 }
 
 ///|
+test "self repository detection: a $/ step skipped by pattern does not use the self repository" {
+  let workspace = prepare_local_action_workspace("self-repo-detect-skipped")
+  test_ensure_dir(workspace + "/wrap")
+  @xfs.write_string_to_file(
+    workspace + "/wrap/action.yml",
+    (
+      #|name: Wrap
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - uses: $/greet
+    ),
+  )
+  let workflow = new_workflow("ci", [
+    new_job("build", [new_uses_step("wrap", "./wrap")]),
+  ])
+  @debug.debug_inspect(
+    workflow_uses_self_repository(workflow, workspace, skip_actions=["$/greet"]),
+    content="false",
+  )
+}
+
+///|
 test "self repository detection: a workflow without $/ does not use the self repository" {
   let workspace = prepare_local_action_workspace("self-repo-detect-none")
   test_ensure_dir(workspace + "/wrap")
@@ -549,6 +572,194 @@ test "lowering: a self-repository action whose name starts with two dots is lowe
   ])
   let result = lower_push_workflow_in_workspace(workflow, workspace)
   @debug.debug_inspect(result.errors, content="[]")
+}
+
+///|
+test "lowering: a step skipped by pattern inside a local composite is left out of the plan" {
+  let workspace = prepare_local_action_workspace("lower-skip-nested-action")
+  test_ensure_dir(workspace + "/setup")
+  @xfs.write_string_to_file(
+    workspace + "/setup/action.yml",
+    (
+      #|name: Setup
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - uses: third-party/action@v1
+      #|    - run: echo composite-done
+      #|      shell: sh
+    ),
+  )
+  let workflow = new_workflow("ci", [
+    new_job("build", [new_uses_step("setup", "./setup")]),
+  ])
+  let result = lower_push_workflow_in_workspace(workflow, workspace, skip_actions=[
+    "third-party/action",
+  ])
+  @debug.debug_inspect(result.errors, content="[]")
+  let scripts = result.plan.tasks.map(fn(task) { task.script })
+  assert_true(scripts.contains("echo composite-done"))
+  assert_true(
+    result.plan.tasks
+    .iter()
+    .all(fn(task) {
+      !task.action
+      .map(fn(action) { action.uses })
+      .unwrap_or("")
+      .contains("third-party/action")
+    }),
+  )
+}
+
+///|
+test "lowering: a step skipped by pattern inside a local composite is reported with its job, name and uses" {
+  let workspace = prepare_local_action_workspace("lower-report-skipped-nested")
+  test_ensure_dir(workspace + "/setup")
+  @xfs.write_string_to_file(
+    workspace + "/setup/action.yml",
+    (
+      #|name: Setup
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - uses: third-party/action@v1
+      #|    - name: Named
+      #|      uses: third-party/action@v2
+      #|    - run: echo composite-done
+      #|      shell: sh
+    ),
+  )
+  let workflow = new_workflow("ci", [
+    new_job("build", [new_uses_step("setup", "./setup")]),
+  ])
+  let result = lower_push_workflow_in_workspace(workflow, workspace, skip_actions=[
+    "third-party/action",
+  ])
+  @debug.debug_inspect(
+    result.skipped_steps.map(fn(step) { (step.job_id, step.name, step.uses) }),
+    content=(
+      #|[
+      #|  ("build", "./setup / third-party/action@v1", "third-party/action@v1"),
+      #|  ("build", "./setup / Named", "third-party/action@v2"),
+      #|]
+    ),
+  )
+}
+
+///|
+test "lowering: a step skipped inside a local composite is reported under the name of the step that uses the composite" {
+  let workspace = prepare_local_action_workspace("lower-report-skipped-named")
+  test_ensure_dir(workspace + "/setup")
+  @xfs.write_string_to_file(
+    workspace + "/setup/action.yml",
+    (
+      #|name: Setup
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - uses: third-party/action@v1
+    ),
+  )
+  let workflow = new_workflow("ci", [
+    new_job("build", [new_uses_step("setup", "./setup", name="Install deps")]),
+  ])
+  let result = lower_push_workflow_in_workspace(workflow, workspace, skip_actions=[
+    "third-party/action",
+  ])
+  @debug.debug_inspect(
+    result.skipped_steps.map(fn(step) { step.name }),
+    content=(
+      #|["Install deps / third-party/action@v1"]
+    ),
+  )
+}
+
+///|
+test "lowering: a step skipped by pattern inside a local reusable workflow is left out of the plan and reported" {
+  let workspace = prepare_local_action_workspace("lower-skip-reusable-step")
+  test_ensure_dir(workspace + "/.github")
+  test_ensure_dir(workspace + "/.github/workflows")
+  @xfs.write_string_to_file(
+    workspace + "/.github/workflows/callee.yml",
+    (
+      #|on: workflow_call
+      #|jobs:
+      #|  inner:
+      #|    runs-on: ubuntu-latest
+      #|    steps:
+      #|      - uses: third-party/action@v1
+      #|      - run: echo reusable-done
+    ),
+  )
+  let parsed = parse_workflow_yaml(
+    (
+      #|on: push
+      #|jobs:
+      #|  call:
+      #|    uses: ./.github/workflows/callee.yml
+    ),
+  )
+  let workflow = expect_workflow(parsed)
+  let result = lower_push_workflow_in_workspace(workflow, workspace, skip_actions=[
+    "third-party/action",
+  ])
+  @debug.debug_inspect(result.errors, content="[]")
+  @debug.debug_inspect(
+    result.skipped_steps.map(fn(step) { (step.name, step.uses) }),
+    content=(
+      #|[("third-party/action@v1", "third-party/action@v1")]
+    ),
+  )
+}
+
+///|
+test "lowering: a step skipped by pattern is not checked against the wasi restrictions" {
+  let parsed = parse_workflow_yaml(
+    (
+      #|on: push
+      #|jobs:
+      #|  build:
+      #|    runs-on: wasi
+      #|    steps:
+      #|      - uses: third-party/action@v1
+    ),
+  )
+  let workflow = expect_workflow(parsed)
+  let result = lower_push_workflow_in_workspace(
+    workflow,
+    prepare_local_action_workspace("lower-skip-wasi-step"),
+    skip_actions=["third-party/action"],
+  )
+  @debug.debug_inspect(result.errors, content="[]")
+}
+
+///|
+async test "prefetch: an action skipped by pattern inside a local composite is not fetched" {
+  let workspace = prepare_local_action_workspace("prefetch-skip-nested-action")
+  test_ensure_dir(workspace + "/setup")
+  @xfs.write_string_to_file(
+    workspace + "/setup/action.yml",
+    (
+      #|name: Setup
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - uses: skip-prefetch-owner/never-cached-action@v1
+      #|    - run: echo composite-done
+      #|      shell: sh
+    ),
+  )
+  let workflow = new_workflow("ci", [
+    new_job("build", [new_uses_step("setup", "./setup")]),
+  ])
+  let prefetch = prefetch_workflow_github_actions_native(
+    workflow,
+    workspace,
+    git_bin=Some(workspace + "/no-such-git"),
+    skip_actions=["skip-prefetch-owner/never-cached-action"],
+  )
+  @debug.debug_inspect(prefetch.errors, content="[]")
+  @debug.debug_inspect(prefetch.fetched, content="[]")
 }
 
 ///|
@@ -3392,6 +3603,80 @@ async test "lowering: remote reusable workflow cache miss fetches and expands wo
 
 ///|
 #cfg(target="native")
+async test "lowering: a local action in a remote reusable workflow is skipped by the pattern it is written as" {
+  let workspace = prepare_local_action_workspace(
+    "reusable-workflow-remote-skip-local-action",
+  )
+  let remote_repo = workspace + "/remote_repo"
+  test_ensure_dir(remote_repo)
+  test_ensure_dir(remote_repo + "/.github")
+  test_ensure_dir(remote_repo + "/.github/workflows")
+  test_ensure_dir(remote_repo + "/.github/actions")
+  test_ensure_dir(remote_repo + "/.github/actions/emit")
+  @xfs.write_string_to_file(
+    remote_repo + "/.github/workflows/reusable.yml",
+    (
+      #|on: workflow_call
+      #|jobs:
+      #|  build:
+      #|    runs-on: ubuntu-latest
+      #|    steps:
+      #|      - id: local
+      #|        uses: ./.github/actions/emit
+      #|      - id: after
+      #|        run: echo reusable-done
+    ),
+  )
+  @xfs.write_string_to_file(
+    remote_repo + "/.github/actions/emit/action.yml",
+    (
+      #|name: emit
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - id: write
+      #|      run: echo emitted
+    ),
+  )
+  let parsed = parse_workflow_yaml(
+    (
+      #|on: push
+      #|jobs:
+      #|  call:
+      #|    uses: demo/skip-tools/.github/workflows/reusable.yml@v1
+    ),
+  )
+  let workflow = parsed.workflow.unwrap()
+  test_support_remove_tree("_build/actrun/github_actions/demo/skip-tools/v1")
+  let git_path = test_support_prepare_fake_git_bin_from_source(
+    workspace,
+    remote_repo,
+    workspace + "/git.log",
+  )
+  let prefetch = prefetch_workflow_github_actions_native(
+    workflow,
+    workspace,
+    git_bin=Some(git_path),
+    skip_actions=["./.github/actions/emit"],
+  )
+  let result = lower_push_workflow_in_workspace(workflow, workspace, skip_actions=[
+    "./.github/actions/emit",
+  ])
+  @debug.debug_inspect(prefetch.errors, content="[]")
+  @debug.debug_inspect(result.errors, content="[]")
+  assert_true(
+    result.plan.tasks.iter().all(fn(task) { !task.script.contains("emitted") }),
+  )
+  @debug.debug_inspect(
+    result.skipped_steps.map(fn(step) { step.uses }),
+    content=(
+      #|["./.github/actions/emit"]
+    ),
+  )
+}
+
+///|
+#cfg(target="native")
 async test "lowering: remote reusable workflow local action is resolved from cached repo" {
   let workspace = prepare_local_action_workspace(
     "reusable-workflow-remote-local-action",
@@ -3932,6 +4217,32 @@ test "security: malicious step name does not affect execution" {
   )
   let result = lower_push_workflow(workflow)
   @debug.debug_inspect(result.errors, content="[]")
+}
+
+///|
+test "uses_matches_skip_pattern: a uses containing a pattern matches" {
+  @debug.debug_inspect(
+    uses_matches_skip_pattern("pnpm/action-setup@v4", [
+      "actions/checkout", "pnpm/action-setup",
+    ]),
+    content="true",
+  )
+}
+
+///|
+test "uses_matches_skip_pattern: a uses containing no pattern does not match" {
+  @debug.debug_inspect(
+    uses_matches_skip_pattern("pnpm/action-setup@v4", ["actions/checkout"]),
+    content="false",
+  )
+}
+
+///|
+test "uses_matches_skip_pattern: no pattern matches nothing" {
+  @debug.debug_inspect(
+    uses_matches_skip_pattern("pnpm/action-setup@v4", []),
+    content="false",
+  )
 }
 
 ///|

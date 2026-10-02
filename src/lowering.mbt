@@ -1233,6 +1233,7 @@ fn substitute_matrix_job(
     services=job.services,
     container=job.container,
     timeout_minutes=job.timeout_minutes,
+    logical_id=job.logical_id,
   )
 }
 
@@ -1364,6 +1365,7 @@ fn expand_matrix_jobs(
             reusable_workflow_inherit_secrets=job.reusable_workflow_inherit_secrets,
             services=job.services,
             container=job.container,
+            logical_id=job.logical_id,
           ),
           visible_needs: job.needs,
           need_targets,
@@ -1484,6 +1486,7 @@ fn expand_reusable_workflows_in_workspace(
   execution_root : String,
   errors : Array[String],
   local_action_repo_roots? : Map[String, String] = Map([]),
+  skip_actions? : Array[String] = [],
 ) -> ReusableWorkflowExpansion {
   let expanded : Array[JobSpec] = []
   let aliases : Map[String, Array[String]] = Map([])
@@ -1637,6 +1640,7 @@ fn expand_reusable_workflows_in_workspace(
                         execution_root,
                         errors,
                         local_action_repo_roots~,
+                        skip_actions~,
                       )
                       if errors.length() > before_errors {
                         break
@@ -1674,16 +1678,23 @@ fn expand_reusable_workflows_in_workspace(
                 for callee_job in callee.jobs {
                   let steps : Array[StepSpec] = []
                   for step in callee_job.steps {
-                    let substituted_step = rewrite_reusable_step_local_uses(
-                      substitute_reusable_needs_step(
-                        substitute_reusable_bindings_step(
-                          step, bound_inputs, bound_secrets,
-                        ),
-                        callee_ids,
+                    let bound_step = substitute_reusable_needs_step(
+                      substitute_reusable_bindings_step(
+                        step, bound_inputs, bound_secrets,
                       ),
-                      source.source_root,
-                      execution_root,
+                      callee_ids,
                     )
+                    // Not rewritten: the lowering matches a skipped step by the uses written in the workflow
+                    let substituted_step = if bound_step.uses is Some(uses) &&
+                      uses_matches_skip_pattern(uses, skip_actions) {
+                      bound_step
+                    } else {
+                      rewrite_reusable_step_local_uses(
+                        bound_step,
+                        source.source_root,
+                        execution_root,
+                      )
+                    }
                     if substituted_step.uses is Some(uses) &&
                       parse_action_ref(uses).action is Some(LocalPath(_)) {
                       local_action_repo_roots[uses] = source.source_root
@@ -1798,6 +1809,7 @@ fn expand_reusable_workflows_in_workspace(
                       reusable_workflow_inherit_secrets=callee_job.reusable_workflow_inherit_secrets,
                       services=callee_job.services,
                       container=callee_job.container,
+                      logical_id=reusable_job_id(job.logical_id, callee_job.id),
                     ),
                   )
                 }
@@ -1810,6 +1822,7 @@ fn expand_reusable_workflows_in_workspace(
                   execution_root,
                   errors,
                   local_action_repo_roots~,
+                  skip_actions~,
                 )
                 if errors.length() > before_errors {
                   continue
@@ -2245,6 +2258,8 @@ fn lower_manifest_backed_action(
   composite_output_mappings? : Map[String, Map[String, String]] = Map([]),
   composite_steps? : Map[String, CompositeStepPlan] = Map([]),
   composite_parents? : Map[String, String] = Map([]),
+  skipped_steps? : Array[SkippedStep] = [],
+  skip_actions? : Array[String] = [],
 ) -> String {
   guard find_local_action_manifest(workspace_root, cached_root)
     is Some((_, manifest_text)) else {
@@ -2286,6 +2301,8 @@ fn lower_manifest_backed_action(
         Some(layout) => layout.repo_root
         None => cached_root
       },
+      skip_actions~,
+      skipped_steps~,
     )
   }
   if action_manifest.runtime.has_prefix("node") {
@@ -2615,6 +2632,8 @@ fn lower_local_action(
   composite_steps? : Map[String, CompositeStepPlan] = Map([]),
   composite_parents? : Map[String, String] = Map([]),
   self_repository_root? : String = ".",
+  skipped_steps? : Array[SkippedStep] = [],
+  skip_actions? : Array[String] = [],
 ) -> String {
   if workspace_root.length() == 0 {
     errors.push(
@@ -2664,6 +2683,8 @@ fn lower_local_action(
       composite_output_mappings~,
       composite_steps~,
       composite_parents~,
+      skip_actions~,
+      skipped_steps~,
     )
   }
   composite_steps[job.id + "/" + outer_step_id] = {
@@ -2687,6 +2708,26 @@ fn lower_local_action(
   let mut inner_index = 0
   while inner_index < action.steps.length() {
     let inner_step = action.steps[inner_index]
+    if inner_step.uses is Some(uses) &&
+      uses_matches_skip_pattern(uses, skip_actions) {
+      let inner_name = if inner_step.name.length() > 0 {
+        substitute_inputs_text(inner_step.name, resolved_inputs)
+      } else {
+        uses
+      }
+      let outer_label = if outer_step.name.length() > 0 {
+        outer_name
+      } else {
+        outer_step.uses.unwrap_or(outer_name)
+      }
+      skipped_steps.push({
+        job_id: job.logical_id,
+        name: outer_label + " / " + inner_name,
+        uses,
+      })
+      inner_index += 1
+      continue
+    }
     let inner_step_id = default_step_id(inner_step, inner_index)
     let resolved_step_id = composite_step_id(outer_step_id, inner_step_id)
     for
@@ -2778,6 +2819,8 @@ fn lower_local_action(
             composite_steps~,
             composite_parents~,
             self_repository_root~,
+            skip_actions~,
+            skipped_steps~,
           )
           inner_index += 1
           continue
@@ -2842,6 +2885,8 @@ fn lower_local_action(
           composite_output_mappings~,
           composite_steps~,
           composite_parents~,
+          skip_actions~,
+          skipped_steps~,
         )
         inner_index += 1
         continue
@@ -2973,7 +3018,11 @@ fn is_wasi_job(job : JobSpec) -> Bool {
 }
 
 ///|
-fn validate_wasi_job(job : JobSpec, errors : Array[String]) -> Unit {
+fn validate_wasi_job(
+  job : JobSpec,
+  errors : Array[String],
+  skip_actions? : Array[String] = [],
+) -> Unit {
   if job.container is Some(_) {
     errors.push(
       "job '\{job.id}' uses runs-on: wasi but has container: which is not supported in wasi mode",
@@ -2989,6 +3038,7 @@ fn validate_wasi_job(job : JobSpec, errors : Array[String]) -> Unit {
     let step = job.steps[step_index]
     let step_id = default_step_id(step, step_index)
     match step.uses {
+      Some(uses) if uses_matches_skip_pattern(uses, skip_actions) => ()
       Some(uses) => {
         let parsed = parse_action_ref(uses)
         match parsed.action {
@@ -3016,8 +3066,10 @@ pub fn lower_push_workflow_in_workspace(
   workflow : WorkflowSpec,
   workspace_root : String,
   self_repository_root? : String = "",
+  skip_actions? : Array[String] = [],
 ) -> LoweringResult {
   let errors : Array[String] = []
+  let skipped_steps : Array[SkippedStep] = []
   let nodes : Array[@wf.FlowNode] = []
   let tasks : Array[@wf.FlowTask] = []
   let task_plans : Array[TaskPlan] = []
@@ -3047,6 +3099,7 @@ pub fn lower_push_workflow_in_workspace(
     workspace_root,
     errors,
     local_action_repo_roots~,
+    skip_actions~,
   )
   let expanded_jobs = expand_matrix_jobs(
     reusable_expansion.jobs,
@@ -3122,7 +3175,7 @@ pub fn lower_push_workflow_in_workspace(
       errors.push("job '\{job.id}' must have at least one step")
     }
     if is_wasi_job(job) {
-      validate_wasi_job(job, errors)
+      validate_wasi_job(job, errors, skip_actions~)
     }
 
     let mut previous_task_id = ""
@@ -3131,6 +3184,20 @@ pub fn lower_push_workflow_in_workspace(
     let mut step_index = 0
     while step_index < job.steps.length() {
       let step = job.steps[step_index]
+      if step.uses is Some(uses) &&
+        uses_matches_skip_pattern(uses, skip_actions) {
+        skipped_steps.push({
+          job_id: job.logical_id,
+          name: if step.name.length() > 0 {
+            step.name
+          } else {
+            uses
+          },
+          uses,
+        })
+        step_index += 1
+        continue
+      }
       let resolved_step_id = default_step_id(step, step_index)
       validate_step_if(job.id, resolved_step_id, step.if_condition, errors)
       validate_continue_on_error(
@@ -3203,6 +3270,8 @@ pub fn lower_push_workflow_in_workspace(
               composite_steps~,
               composite_parents~,
               self_repository_root=action_self_root,
+              skip_actions~,
+              skipped_steps~,
             )
             step_index += 1
             continue
@@ -3250,6 +3319,8 @@ pub fn lower_push_workflow_in_workspace(
             composite_output_mappings~,
             composite_steps~,
             composite_parents~,
+            skip_actions~,
+            skipped_steps~,
           )
           step_index += 1
           continue
@@ -3351,6 +3422,7 @@ pub fn lower_push_workflow_in_workspace(
       composite_parents,
     },
     errors,
+    skipped_steps,
   }
 }
 
