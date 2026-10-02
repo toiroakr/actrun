@@ -8316,7 +8316,9 @@ async fn run_workflow_in_execution_root(
   }
 
   let self_repository_root = if @ar.workflow_uses_self_repository(
-      filtered_workflow, execution_root,
+      filtered_workflow,
+      execution_root,
+      skip_actions=options.skip_actions,
     ) {
     match create_self_repository_snapshot(execution_root) {
       Some(path) => path

@@ -165,7 +165,7 @@ pub fn strip_unsupported_workflow_fields(WorkflowSpec) -> WorkflowSpec
 
 pub fn uses_matches_skip_pattern(String, Array[String]) -> Bool
 
-pub fn workflow_uses_self_repository(WorkflowSpec, String) -> Bool
+pub fn workflow_uses_self_repository(WorkflowSpec, String, skip_actions? : Array[String]) -> Bool
 
 // Errors
 

@@ -1484,6 +1484,7 @@ fn expand_reusable_workflows_in_workspace(
   execution_root : String,
   errors : Array[String],
   local_action_repo_roots? : Map[String, String] = Map([]),
+  skip_actions? : Array[String] = [],
 ) -> ReusableWorkflowExpansion {
   let expanded : Array[JobSpec] = []
   let aliases : Map[String, Array[String]] = Map([])
@@ -1637,6 +1638,7 @@ fn expand_reusable_workflows_in_workspace(
                         execution_root,
                         errors,
                         local_action_repo_roots~,
+                        skip_actions~,
                       )
                       if errors.length() > before_errors {
                         break
@@ -1674,16 +1676,23 @@ fn expand_reusable_workflows_in_workspace(
                 for callee_job in callee.jobs {
                   let steps : Array[StepSpec] = []
                   for step in callee_job.steps {
-                    let substituted_step = rewrite_reusable_step_local_uses(
-                      substitute_reusable_needs_step(
-                        substitute_reusable_bindings_step(
-                          step, bound_inputs, bound_secrets,
-                        ),
-                        callee_ids,
+                    let bound_step = substitute_reusable_needs_step(
+                      substitute_reusable_bindings_step(
+                        step, bound_inputs, bound_secrets,
                       ),
-                      source.source_root,
-                      execution_root,
+                      callee_ids,
                     )
+                    // Not rewritten: the lowering matches a skipped step by the uses written in the workflow
+                    let substituted_step = if bound_step.uses is Some(uses) &&
+                      uses_matches_skip_pattern(uses, skip_actions) {
+                      bound_step
+                    } else {
+                      rewrite_reusable_step_local_uses(
+                        bound_step,
+                        source.source_root,
+                        execution_root,
+                      )
+                    }
                     if substituted_step.uses is Some(uses) &&
                       parse_action_ref(uses).action is Some(LocalPath(_)) {
                       local_action_repo_roots[uses] = source.source_root
@@ -1810,6 +1819,7 @@ fn expand_reusable_workflows_in_workspace(
                   execution_root,
                   errors,
                   local_action_repo_roots~,
+                  skip_actions~,
                 )
                 if errors.length() > before_errors {
                   continue
@@ -3005,7 +3015,11 @@ fn is_wasi_job(job : JobSpec) -> Bool {
 }
 
 ///|
-fn validate_wasi_job(job : JobSpec, errors : Array[String]) -> Unit {
+fn validate_wasi_job(
+  job : JobSpec,
+  errors : Array[String],
+  skip_actions? : Array[String] = [],
+) -> Unit {
   if job.container is Some(_) {
     errors.push(
       "job '\{job.id}' uses runs-on: wasi but has container: which is not supported in wasi mode",
@@ -3021,6 +3035,7 @@ fn validate_wasi_job(job : JobSpec, errors : Array[String]) -> Unit {
     let step = job.steps[step_index]
     let step_id = default_step_id(step, step_index)
     match step.uses {
+      Some(uses) if uses_matches_skip_pattern(uses, skip_actions) => ()
       Some(uses) => {
         let parsed = parse_action_ref(uses)
         match parsed.action {
@@ -3081,6 +3096,7 @@ pub fn lower_push_workflow_in_workspace(
     workspace_root,
     errors,
     local_action_repo_roots~,
+    skip_actions~,
   )
   let expanded_jobs = expand_matrix_jobs(
     reusable_expansion.jobs,
@@ -3156,7 +3172,7 @@ pub fn lower_push_workflow_in_workspace(
       errors.push("job '\{job.id}' must have at least one step")
     }
     if is_wasi_job(job) {
-      validate_wasi_job(job, errors)
+      validate_wasi_job(job, errors, skip_actions~)
     }
 
     let mut previous_task_id = ""

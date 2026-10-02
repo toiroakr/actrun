@@ -520,8 +520,9 @@ pub async fn prefetch_workflow_github_actions_native(
 pub fn workflow_uses_self_repository(
   workflow : WorkflowSpec,
   workspace_root : String,
+  skip_actions? : Array[String] = [],
 ) -> Bool {
-  jobs_use_self_repository(workflow, workspace_root, Map([]))
+  jobs_use_self_repository(workflow, workspace_root, Map([]), skip_actions~)
 }
 
 ///|
@@ -529,9 +530,16 @@ fn jobs_use_self_repository(
   workflow : WorkflowSpec,
   workspace_root : String,
   visited : Map[String, Bool],
+  skip_actions? : Array[String] = [],
 ) -> Bool {
   for job in workflow.jobs {
-    if steps_use_self_repository(job.steps, workspace_root, ".", visited) {
+    if steps_use_self_repository(
+        job.steps,
+        workspace_root,
+        ".",
+        visited,
+        skip_actions~,
+      ) {
       return true
     }
     guard job.reusable_workflow is Some(path) && path.has_prefix("./") else {
@@ -549,7 +557,7 @@ fn jobs_use_self_repository(
       parse_workflow_yaml(text).workflow is Some(callee) else {
       continue
     }
-    if jobs_use_self_repository(callee, workspace_root, visited) {
+    if jobs_use_self_repository(callee, workspace_root, visited, skip_actions~) {
       return true
     }
   }
@@ -562,9 +570,13 @@ fn steps_use_self_repository(
   workspace_root : String,
   base_dir : String,
   visited : Map[String, Bool],
+  skip_actions? : Array[String] = [],
 ) -> Bool {
   for step in steps {
     guard step.uses is Some(uses) else { continue }
+    if uses_matches_skip_pattern(uses, skip_actions) {
+      continue
+    }
     if is_self_repository_uses(uses) {
       return true
     }
@@ -584,6 +596,7 @@ fn steps_use_self_repository(
         workspace_root,
         action_dir,
         visited,
+        skip_actions~,
       ) {
       return true
     }
