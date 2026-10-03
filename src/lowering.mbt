@@ -3487,7 +3487,10 @@ pub fn lower_push_workflow_in_workspace(
         "",
         "success()",
         job.runs_on,
-        {},
+        match job_env.get("ACTRUN_COVERAGE_JOB") {
+          Some(source) => { "ACTRUN_COVERAGE_JOB": source }
+          None => {}
+        },
       ),
     )
     entry_targets.push(barrier_id)

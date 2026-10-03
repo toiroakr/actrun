@@ -6774,9 +6774,20 @@ async test "executor: YAML coverage distinguishes skipped fields and condition o
         if_condition="false",
       ),
     ]),
+    new_job(
+      "all-skipped-false",
+      [new_uses_step("external", "example/noop@v1")],
+      if_condition="false",
+      env={ "ACTRUN_COVERAGE_JOB": "skipped-false-job" },
+    ),
+    new_job("all-skipped", [new_uses_step("external", "example/noop@v1")], env={
+      "ACTRUN_COVERAGE_JOB": "all-skipped-job",
+    }),
   ])
   let report = execute_lowered_native(
-    lower_push_workflow(workflow),
+    lower_push_workflow_in_workspace(workflow, workspace, skip_actions=[
+      "example/noop",
+    ]),
     workspace_root=workspace,
   )
   executor_test_restore_env_var("ACTRUN_COVERAGE_DIR", previous)
@@ -6787,6 +6798,8 @@ async test "executor: YAML coverage distinguishes skipped fields and condition o
   })
   for
     (source, field, outcome, expected) in [
+      ("skipped-false-job", "if", Json::boolean(false), true),
+      ("all-skipped-job", "if", Json::boolean(true), true),
       ("yes", "if", Json::boolean(true), true),
       ("no", "if", Json::boolean(false), true),
       ("yes", "env.VALUE", Json::null(), true),
