@@ -15,6 +15,7 @@ priv struct IfConditionContext {
   secrets_context : Map[String, String]
   github_context : Map[String, String]
   runner_context : Map[String, String]
+  dispatch_inputs : Map[String, String]
   needs_outputs : Map[String, Map[String, String]]
   needs_results : Map[String, String]
   success_value : Bool
@@ -34,6 +35,7 @@ fn new_if_condition_context(
   secrets_context? : Map[String, String] = Map([]),
   github_context? : Map[String, String] = Map([]),
   runner_context? : Map[String, String] = Map([]),
+  dispatch_inputs? : Map[String, String] = Map([]),
   needs_outputs? : Map[String, Map[String, String]] = Map([]),
   needs_results? : Map[String, String] = Map([]),
   success_value? : Bool = true,
@@ -51,6 +53,7 @@ fn new_if_condition_context(
     secrets_context,
     github_context,
     runner_context,
+    dispatch_inputs,
     needs_outputs,
     needs_results,
     success_value,
@@ -227,7 +230,14 @@ fn if_quoted_string(text : String) -> String? {
         trimmed.unsafe_get(trimmed.length() - 1) == '"'
       )
     ) {
-    Some(if_text_slice(trimmed, 1, trimmed.length() - 1))
+    let value = if_text_slice(trimmed, 1, trimmed.length() - 1)
+    Some(
+      if trimmed.unsafe_get(0) == '\'' {
+        value.replace_all(old="''", new="'")
+      } else {
+        value
+      },
+    )
   } else {
     None
   }
@@ -1101,6 +1111,15 @@ fn if_condition_atom_value(
       return if_condition_value_from_json(
         Json::string(
           if_map_get_case_insensitive(ctx.secrets_context, name).unwrap_or(""),
+        ),
+      )
+    None => ()
+  }
+  match dispatch_inputs_expr_name(trimmed) {
+    Some(name) =>
+      return if_condition_value_from_json(
+        Json::string(
+          if_map_get_case_insensitive(ctx.dispatch_inputs, name).unwrap_or(""),
         ),
       )
     None => ()

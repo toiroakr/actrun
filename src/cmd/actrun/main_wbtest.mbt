@@ -5687,3 +5687,25 @@ test "cli: event payload survives explicit context overrides" {
   let merged = merge_cli_push_event(base, options)
   assert_eq(merged.payload.unwrap(), payload)
 }
+
+///|
+async test "local context: event without sender uses configured actor while explicit empty sender wins" {
+  for
+    (payload, expected) in [
+      ("{}", "local-user"),
+      ("{\"sender\":{\"login\":\"\"}}", ""),
+    ] {
+    let event = @ar.new_push_event(
+      "main",
+      [],
+      before_sha="a",
+      after_sha="b",
+      repository="demo/repo",
+      payload=Some(@json.parse(payload)),
+    )
+    let config = { ..default_local_context_config(), actor: "local-user", }
+    let merged = apply_local_context_defaults(event, config, None)
+    assert_eq(merged.actor, expected)
+    assert_eq(merged.payload, event.payload)
+  }
+}

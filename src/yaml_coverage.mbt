@@ -18,34 +18,11 @@ fn record_yaml_coverage(
       None => Json::null()
     },
   }
-  let filename = source +
-    "-" +
-    field +
-    "-" +
-    (match outcome {
-      Some(value) => value.to_string()
-      None => "seen"
-    })
-  let parts : Array[String] = filename
-    .iter()
-    .map(fn(c) {
-      if (c >= 'a' && c <= 'z') ||
-        (c >= 'A' && c <= 'Z') ||
-        (c >= '0' && c <= '9') ||
-        c == '-' ||
-        c == '_' ||
-        c == '.' {
-        c.to_string()
-      } else {
-        "_"
-      }
-    })
-    .collect()
-  let safe_name = parts.join("")
-  @xfs.write_string_to_file(
-    directory + "/" + safe_name + ".json",
-    record.stringify(),
-  ) catch {
+  let serialized = record.stringify()
+  let safe_name = @crypto.bytes_to_hex_string(
+    @crypto.sha256(@utf8.encode(serialized)),
+  )
+  @xfs.write_string_to_file(directory + "/" + safe_name + ".json", serialized) catch {
     _ => ()
   }
 }

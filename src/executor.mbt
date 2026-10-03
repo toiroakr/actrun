@@ -1424,6 +1424,7 @@ fn resolve_expression_value(
     if_logical_expression_value(
       expression,
       new_if_condition_context(
+        dispatch_inputs~,
         step_outputs=state.step_outputs,
         step_outcomes=state.step_outcomes,
         step_conclusions=state.step_conclusions,
@@ -1502,6 +1503,7 @@ fn resolve_expression_value(
     evaluate_string_function_expression(
       expression,
       new_if_condition_context(
+        dispatch_inputs~,
         step_outputs=state.step_outputs,
         step_outcomes=state.step_outcomes,
         step_conclusions=state.step_conclusions,
@@ -3942,6 +3944,7 @@ async fn dump_plan_step_context_json(
   let if_result = evaluate_if_condition(
     plan.if_condition,
     new_if_condition_context(
+      dispatch_inputs~,
       step_outputs=state.step_outputs,
       step_outcomes=state.step_outcomes,
       step_conclusions=state.step_conclusions,
@@ -4024,6 +4027,7 @@ pub async fn dump_workflow_context_json(
         evaluate_if_condition(
           job_if,
           new_if_condition_context(
+            dispatch_inputs~,
             step_outputs={},
             step_outcomes={},
             step_conclusions={},
@@ -4388,6 +4392,7 @@ pub async fn execute_lowered_native(
                 .get(plan.job_id)
                 .unwrap_or("success()"),
                 new_if_condition_context(
+                  dispatch_inputs~,
                   step_outputs=current_state.step_outputs,
                   step_outcomes=current_state.step_outcomes,
                   step_conclusions=current_state.step_conclusions,
@@ -4522,6 +4527,7 @@ pub async fn execute_lowered_native(
               composite_continue_on_error_values[key] = evaluate_boolean_condition(
                 composite.continue_on_error,
                 new_if_condition_context(
+                  dispatch_inputs~,
                   step_outputs=current_state.step_outputs,
                   step_outcomes=current_state.step_outcomes,
                   step_conclusions=current_state.step_conclusions,
@@ -4558,6 +4564,7 @@ pub async fn execute_lowered_native(
             let decision = evaluate_if_condition(
               plan.if_condition,
               new_if_condition_context(
+                dispatch_inputs~,
                 step_outputs=current_state.step_outputs,
                 step_outcomes=current_state.step_outcomes,
                 step_conclusions=current_state.step_conclusions,
@@ -4767,6 +4774,7 @@ pub async fn execute_lowered_native(
               )
               let step_scope = plan_step_scope(lowered.plan, plan)
               let condition_context = new_if_condition_context(
+                dispatch_inputs~,
                 step_outputs=current_state.step_outputs,
                 step_outcomes=current_state.step_outcomes,
                 step_conclusions=current_state.step_conclusions,

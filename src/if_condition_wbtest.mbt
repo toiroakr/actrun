@@ -38,3 +38,17 @@ test "logical operands evaluate comparisons negation and numeric truthiness" {
     )
   }
 }
+
+///|
+test "substituted composite input quotes survive expression evaluation" {
+  let expression = substitute_inputs_text("${{ format('{0}', inputs.text) }}", {
+    "text": "it's fine",
+  })
+  assert_eq(
+    evaluate_string_function_expression(
+      unwrap_if_expression(expression),
+      new_if_condition_context(),
+    ),
+    Some("it's fine"),
+  )
+}

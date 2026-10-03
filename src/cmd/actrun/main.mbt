@@ -868,7 +868,15 @@ async fn apply_local_context_defaults(
       after_sha
     }
   }
-  let actor = if base.actor.length() > 0 || base.payload is Some(_) {
+  let explicit_actor = match base.payload {
+    Some(Object(payload)) =>
+      match payload.get("sender") {
+        Some(Object(sender)) => sender.get("login") is Some(String(_))
+        _ => false
+      }
+    _ => false
+  }
+  let actor = if base.actor.length() > 0 || explicit_actor {
     base.actor
   } else if local_context.actor.length() > 0 {
     local_context.actor

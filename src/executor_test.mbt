@@ -6759,6 +6759,8 @@ async test "executor: YAML coverage distinguishes skipped fields and condition o
   let previous = executor_test_set_env_var("ACTRUN_COVERAGE_DIR", directory)
   let workflow = new_workflow("ci", [
     new_job("a", [
+      new_run_step("first", "true", env={ "ACTRUN_COVERAGE_STEP": "step/a" }),
+      new_run_step("second", "true", env={ "ACTRUN_COVERAGE_STEP": "step?a" }),
       new_run_step(
         "yes",
         "printf '%s' \"$VALUE\"",
@@ -6780,17 +6782,32 @@ async test "executor: YAML coverage distinguishes skipped fields and condition o
   executor_test_restore_env_var("ACTRUN_COVERAGE_DIR", previous)
   @debug.assert_eq(expect_task_report(report, "a/yes").status, "success")
   @debug.assert_eq(expect_task_report(report, "a/no").status, "skipped")
-  @debug.assert_eq(@xfs.path_exists(directory + "/yes-if-true.json"), true)
-  @debug.assert_eq(@xfs.path_exists(directory + "/no-if-false.json"), true)
-  @debug.assert_eq(
-    @xfs.path_exists(directory + "/yes-env.VALUE-seen.json"),
-    true,
-  )
-  @debug.assert_eq(
-    @xfs.path_exists(directory + "/no-env.VALUE-seen.json"),
-    false,
-  )
-  @debug.assert_eq(@xfs.path_exists(directory + "/no-run-seen.json"), false)
+  let records = @xfs.read_dir(directory).map(file => {
+    @xfs.read_file_to_string(directory + "/" + file)
+  })
+  for
+    (source, field, outcome, expected) in [
+      ("yes", "if", Json::boolean(true), true),
+      ("no", "if", Json::boolean(false), true),
+      ("yes", "env.VALUE", Json::null(), true),
+      ("no", "env.VALUE", Json::null(), false),
+      ("no", "run", Json::null(), false),
+    ] {
+    let record : Json = { "source": source, "field": field, "outcome": outcome }
+    assert_eq(records.contains(record.stringify()), expected)
+  }
+  let sources : Array[String] = []
+  for file in @xfs.read_dir(directory) {
+    let record = @json.parse(@xfs.read_file_to_string(directory + "/" + file))
+    if record is Object(fields) &&
+      fields.get("field") == Some(Json::string("run")) {
+      if fields.get("source") is Some(String(source)) {
+        sources.push(source)
+      }
+    }
+  }
+  sources.sort_by(String::lexical_compare)
+  assert_eq(sources, ["step/a", "step?a", "yes"])
   for file in @xfs.read_dir(directory) {
     @debug.assert_eq(
       @xfs.read_file_to_string(directory + "/" + file).contains(
@@ -6908,4 +6925,23 @@ async test "executor: composite forwards interpolated input to builtin action" {
     expect_task_report(report, "build/example__upload").status,
     "success",
   )
+}
+
+///|
+#cfg(target="native")
+async test "executor: logical expressions use supplied workflow inputs" {
+  let workspace = prepare_workspace("executor-logical-inputs")
+  let workflow = new_workflow("ci", [
+    new_job("a", [
+      new_run_step(
+        "value", "printf '%s/%s' \"${{ inputs.target || 'default' }}\" \"${{ github.event.inputs.target || 'default' }}\"",
+      ),
+    ]),
+  ])
+  let report = execute_lowered_native(
+    lower_push_workflow(workflow),
+    workspace_root=workspace,
+    dispatch_inputs={ "target": "chosen" },
+  )
+  assert_eq(expect_task_report(report, "a/value").stdout, "chosen/chosen")
 }

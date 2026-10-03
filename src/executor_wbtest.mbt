@@ -542,19 +542,25 @@ test "step_conclusion_visible: a failure inside an enclosing composite is visibl
 async test "artifact upload rejects links escaping runner temp" {
   let root = wbtest_setup_tmpdir()
   let workspace = root + "/workspace"
-  let temporary = root + "/temp"
   let outside = root + "/outside"
-  let _ = wbtest_run("mkdir", ["-p", workspace, temporary + "/bundle", outside])
-  @xfs.write_string_to_file(outside + "/secret.txt", "private")
-  let _ = wbtest_run("ln", ["-s", outside, temporary + "/bundle/link"])
-  for input in [temporary + "/bundle/link/secret.txt", temporary + "/bundle"] {
-    let selection = artifact_select_upload_files(
+  for temporary in [root + "/temp", workspace + "/temp"] {
+    let _ = wbtest_run("mkdir", [
+      "-p",
       workspace,
-      [input],
-      runner_temp=temporary,
-    )
-    assert_eq(selection.file_paths.length(), 0)
-    assert_true(selection.invalid_path is Some(_))
+      temporary + "/bundle",
+      outside,
+    ])
+    @xfs.write_string_to_file(outside + "/secret.txt", "private")
+    let _ = wbtest_run("ln", ["-s", outside, temporary + "/bundle/link"])
+    for input in [temporary + "/bundle/link/secret.txt", temporary + "/bundle"] {
+      let selection = artifact_select_upload_files(
+        workspace,
+        [input],
+        runner_temp=temporary,
+      )
+      assert_eq(selection.file_paths.length(), 0)
+      assert_true(selection.invalid_path is Some(_))
+    }
   }
   wbtest_cleanup(root)
 }
@@ -575,6 +581,34 @@ async test "artifact upload applies glob and exclusions within runner temp" {
     )
     assert_eq(selection.file_paths.length(), 1)
     assert_true(selection.file_paths[0].has_suffix("/result.xml"))
+  }
+  wbtest_cleanup(root)
+}
+
+///|
+async test "artifact upload excludes hidden runner temp entries unless enabled" {
+  let root = wbtest_setup_tmpdir()
+  let workspace = root + "/workspace"
+  let temporary = root + "/temp"
+  let _ = wbtest_run("mkdir", ["-p", workspace, temporary + "/reports/.hidden"])
+  @xfs.write_string_to_file(temporary + "/reports/result.xml", "result")
+  @xfs.write_string_to_file(temporary + "/reports/.env", "private")
+  @xfs.write_string_to_file(temporary + "/reports/.hidden/token", "private")
+  for input in [temporary + "/reports", temporary + "/reports/**/*"] {
+    let selection = artifact_select_upload_files(
+      workspace,
+      [input],
+      runner_temp=temporary,
+    )
+    assert_eq(selection.file_paths.length(), 1)
+    assert_true(selection.file_paths[0].has_suffix("/result.xml"))
+    let selection = artifact_select_upload_files(
+      workspace,
+      [input],
+      runner_temp=temporary,
+      include_hidden=true,
+    )
+    assert_eq(selection.file_paths.length(), 3)
   }
   wbtest_cleanup(root)
 }

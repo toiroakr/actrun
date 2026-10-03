@@ -257,6 +257,7 @@ fn artifact_collect_relative_files(
 async fn artifact_collect_absolute_files(
   current_abs : String,
   files : Array[String],
+  include_hidden? : Bool = false,
   boundary? : String = "",
   visited? : Map[String, Bool] = Map([]),
 ) -> Bool {
@@ -276,13 +277,22 @@ async fn artifact_collect_absolute_files(
   }
   entries.sort_by(String::lexical_compare)
   for entry in entries {
+    if !include_hidden && entry.has_prefix(".") {
+      continue
+    }
     let next_abs = artifact_path_join(current_abs, entry)
     if boundary.length() > 0 &&
       validate_workspace_path_real(boundary, next_abs) is None {
       return false
     }
     if exec_is_dir(next_abs) {
-      if !artifact_collect_absolute_files(next_abs, files, boundary~, visited~) {
+      if !artifact_collect_absolute_files(
+          next_abs,
+          files,
+          include_hidden~,
+          boundary~,
+          visited~,
+        ) {
         return false
       }
     } else {
@@ -400,6 +410,7 @@ async fn artifact_select_upload_files(
         if !artifact_collect_absolute_files(
             root_abs,
             files,
+            include_hidden~,
             boundary=runner_temp,
           ) {
           return { root_paths: [], file_paths: [], invalid_path: Some(path), }
@@ -425,7 +436,7 @@ async fn artifact_select_upload_files(
       path.has_prefix("/") &&
       validate_workspace_path(runner_temp, path) is Some(_)
     guard in_workspace || in_runner_temp else { continue }
-    if !in_workspace && validate_workspace_path_real(runner_temp, path) is None {
+    if in_runner_temp && validate_workspace_path_real(runner_temp, path) is None {
       return { root_paths: [], file_paths: [], invalid_path: Some(path), }
     }
     let resolved_path = resolve_task_cwd(workspace_root, path)
@@ -439,7 +450,8 @@ async fn artifact_select_upload_files(
       if !artifact_collect_absolute_files(
           absolute_path,
           child_files,
-          boundary=if in_workspace { "" } else { runner_temp },
+          include_hidden~,
+          boundary=if in_runner_temp { runner_temp } else { "" },
         ) {
         return { root_paths: [], file_paths: [], invalid_path: Some(path), }
       }
