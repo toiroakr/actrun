@@ -218,42 +218,6 @@ fn artifact_path_matches(pattern : String, relative_path : String) -> Bool {
 }
 
 ///|
-fn artifact_collect_relative_files(
-  current_abs : String,
-  relative_prefix : String,
-  files : Array[String],
-  include_hidden? : Bool = false,
-) -> Unit {
-  let entries = try @xfs.read_dir(current_abs) catch {
-    _ => []
-  } noraise {
-    value => value.to_owned()
-  }
-  entries.sort_by(String::lexical_compare)
-  for entry in entries {
-    if !include_hidden && entry.has_prefix(".") {
-      continue
-    }
-    let next_abs = artifact_path_join(current_abs, entry)
-    let next_relative = if relative_prefix.length() == 0 {
-      entry
-    } else {
-      relative_prefix + "/" + entry
-    }
-    if exec_is_dir(next_abs) {
-      artifact_collect_relative_files(
-        next_abs,
-        next_relative,
-        files,
-        include_hidden~,
-      )
-    } else {
-      files.push(next_relative)
-    }
-  }
-}
-
-///|
 fn artifact_path_is_hidden(boundary : String, path : String) -> Bool {
   let relative = workspace_relative_store_path(
     artifact_canonical_path(boundary),
@@ -267,21 +231,16 @@ async fn artifact_collect_absolute_files(
   current_abs : String,
   files : Array[String],
   include_hidden? : Bool = false,
-  boundary? : String = "",
+  boundary~ : String,
   visited? : Map[String, Bool] = Map([]),
 ) -> Bool {
-  let real_path = if boundary.length() > 0 {
-    guard validate_workspace_path_real(boundary, current_abs) is Some(real) else {
-      return false
-    }
-    if visited.contains(real) {
-      return true
-    }
-    visited[real] = true
-    Some(real)
-  } else {
-    None
+  guard validate_workspace_path_real(boundary, current_abs) is Some(real_path) else {
+    return false
   }
+  if visited.contains(real_path) {
+    return true
+  }
+  visited[real_path] = true
   let entries = try @xfs.read_dir(current_abs) catch {
     _ => []
   } noraise {
@@ -293,8 +252,7 @@ async fn artifact_collect_absolute_files(
       continue
     }
     let next_abs = artifact_path_join(current_abs, entry)
-    if boundary.length() > 0 &&
-      validate_workspace_path_real(boundary, next_abs) is None {
+    if validate_workspace_path_real(boundary, next_abs) is None {
       return false
     }
     if exec_is_dir(next_abs) {
@@ -311,24 +269,8 @@ async fn artifact_collect_absolute_files(
       files.push(next_abs)
     }
   }
-  if real_path is Some(real) {
-    visited.remove(real)
-  }
+  visited.remove(real_path)
   true
-}
-
-///|
-fn artifact_workspace_relative_files(
-  workspace_root : String,
-  include_hidden? : Bool = false,
-) -> Array[String] {
-  let workspace_abs = absolute_exec_path(resolve_task_cwd(workspace_root, ""))
-  let files : Array[String] = []
-  if !@xfs.path_exists(workspace_abs) {
-    return files
-  }
-  artifact_collect_relative_files(workspace_abs, "", files, include_hidden~)
-  files
 }
 
 ///|
@@ -393,105 +335,57 @@ async fn artifact_select_upload_files(
   let included_roots : Array[String] = []
   let included_files : Map[String, Bool] = Map([])
   let excluded_patterns : Array[String] = []
-  let workspace_files = artifact_workspace_relative_files(
-    workspace_root,
-    include_hidden~,
-  )
   for raw_path in upload_paths {
     let path = raw_path.trim(chars=" \t\r\n").to_owned()
     if path.has_prefix("!") {
       excluded_patterns.push(exec_text_slice(path, 1, path.length()))
       continue
     }
-    if artifact_has_wildcard(path) {
-      let root_relative = artifact_glob_root(path)
-      let root_abs = artifact_canonical_path(
-        resolve_task_cwd(
-          workspace_root,
-          if path.has_prefix("/") {
-            "/" + root_relative
-          } else {
-            root_relative
-          },
-        ),
-      )
-      let boundary = if path.has_prefix("/") &&
-        runner_temp.length() > 0 &&
-        validate_workspace_path(runner_temp, root_abs) is Some(_) {
-        runner_temp
-      } else if validate_workspace_path(workspace_root, root_abs) is Some(_) {
-        workspace_root
-      } else {
-        return { root_paths: [], file_paths: [], invalid_path: Some(path), }
-      }
-      if !include_hidden && artifact_path_is_hidden(boundary, root_abs) {
-        continue
-      }
-      if !@xfs.path_exists(root_abs) {
-        continue
-      }
-      included_roots.push(root_abs)
-      if path.has_prefix("/") {
-        let files : Array[String] = []
-        if !artifact_collect_absolute_files(
-            root_abs,
-            files,
-            include_hidden~,
-            boundary~,
-          ) {
-          return { root_paths: [], file_paths: [], invalid_path: Some(path), }
-        }
-        for file in files {
-          if artifact_path_matches(path, file) {
-            included_files[file] = true
-          }
-        }
-        continue
-      }
-      for relative_path in workspace_files {
-        if artifact_path_matches(path, relative_path) {
-          included_files[absolute_exec_path(
-            resolve_task_cwd(workspace_root, relative_path),
-          )] = true
-        }
-      }
-      continue
+    let absolute_path = artifact_canonical_path(
+      absolute_exec_path(resolve_task_cwd(workspace_root, path)),
+    )
+    let glob = artifact_has_wildcard(path)
+    let root = if glob {
+      "/" + artifact_glob_root(absolute_path)
+    } else {
+      absolute_path
     }
-    let in_workspace = validate_workspace_path(workspace_root, path) is Some(_)
-    let in_runner_temp = runner_temp.length() > 0 &&
-      path.has_prefix("/") &&
-      validate_workspace_path(runner_temp, path) is Some(_)
-    guard in_workspace || in_runner_temp else { continue }
-    if in_runner_temp && validate_workspace_path_real(runner_temp, path) is None {
+    let boundary = if runner_temp.length() > 0 &&
+      validate_workspace_path(runner_temp, root) is Some(_) {
+      runner_temp
+    } else if validate_workspace_path(workspace_root, root) is Some(_) {
+      workspace_root
+    } else {
       return { root_paths: [], file_paths: [], invalid_path: Some(path), }
     }
-    let resolved_path = resolve_task_cwd(workspace_root, path)
-    if !@xfs.path_exists(resolved_path) {
+    if !include_hidden && artifact_path_is_hidden(boundary, root) {
       continue
     }
-    let absolute_path = artifact_canonical_path(resolved_path)
-    let boundary = if in_runner_temp { runner_temp } else { workspace_root }
-    if !include_hidden && artifact_path_is_hidden(boundary, absolute_path) {
+    if !@xfs.path_exists(root) {
       continue
     }
-    if exec_is_dir(absolute_path) {
-      included_roots.push(absolute_path)
-      let child_files : Array[String] = []
+    if validate_workspace_path_real(boundary, root) is None {
+      return { root_paths: [], file_paths: [], invalid_path: Some(path), }
+    }
+    if glob || exec_is_dir(root) {
+      included_roots.push(root)
+      let files : Array[String] = []
       if !artifact_collect_absolute_files(
-          absolute_path,
-          child_files,
+          root,
+          files,
           include_hidden~,
-          boundary=if in_runner_temp { runner_temp } else { "" },
+          boundary~,
         ) {
         return { root_paths: [], file_paths: [], invalid_path: Some(path), }
       }
-      for child in child_files {
-        included_files[child] = true
+      for file in files {
+        if !glob || artifact_path_matches(absolute_path, file) {
+          included_files[file] = true
+        }
       }
     } else {
-      let root = artifact_canonical_path(artifact_parent_dir(absolute_path))
-      included_roots.push(root)
-      included_files[absolute_path] = true
+      included_roots.push(artifact_canonical_path(artifact_parent_dir(root)))
+      included_files[root] = true
     }
   }
   let selected_files : Array[String] = []

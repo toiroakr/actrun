@@ -552,7 +552,13 @@ async test "artifact upload rejects links escaping runner temp" {
     ])
     @xfs.write_string_to_file(outside + "/secret.txt", "private")
     let _ = wbtest_run("ln", ["-s", outside, temporary + "/bundle/link"])
-    for input in [temporary + "/bundle/link/secret.txt", temporary + "/bundle"] {
+    let inputs = [temporary + "/bundle/link/secret.txt", temporary + "/bundle"]
+    if temporary == workspace + "/temp" {
+      inputs.push("temp/bundle/link/secret.txt")
+      inputs.push("temp/bundle")
+      inputs.push("temp/bundle/**/*")
+    }
+    for input in inputs {
       let selection = artifact_select_upload_files(
         workspace,
         [input],
@@ -677,4 +683,22 @@ async test "artifact upload retains in-boundary symlink aliases while stopping c
   assert_eq(selection.file_paths.length(), 1)
   assert_true(selection.file_paths[0].has_suffix("/link/result.txt"))
   wbtest_cleanup(root)
+}
+
+///|
+async test "artifact upload relative globs stop cycles inside workspace runner temp" {
+  let workspace = wbtest_setup_tmpdir()
+  let temporary = workspace + "/temp"
+  let _ = wbtest_run("mkdir", ["-p", temporary])
+  @xfs.write_string_to_file(temporary + "/result.txt", "result")
+  let _ = wbtest_run("ln", ["-s", temporary, temporary + "/cycle"])
+  let selection = artifact_select_upload_files(
+    workspace,
+    ["temp/**/*.txt"],
+    runner_temp=temporary,
+  )
+  assert_eq(selection.invalid_path, None)
+  assert_eq(selection.file_paths.length(), 1)
+  assert_true(selection.file_paths[0].has_suffix("/temp/result.txt"))
+  wbtest_cleanup(workspace)
 }
