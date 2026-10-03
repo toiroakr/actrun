@@ -1420,25 +1420,30 @@ fn resolve_expression_value(
   needs_results : Map[String, String],
   dispatch_inputs : Map[String, String],
 ) -> String {
-  match
-    if_logical_expression_value(
-      expression,
-      new_if_condition_context(
-        dispatch_inputs~,
-        step_outputs=state.step_outputs,
-        step_outcomes=state.step_outcomes,
-        step_conclusions=state.step_conclusions,
-        workspace_root~,
-        env_context~,
-        job_context~,
-        vars_context~,
-        secrets_context~,
-        github_context~,
-        runner_context~,
-        needs_outputs~,
-        needs_results~,
-      ),
-    ) {
+  let context = new_if_condition_context(
+    dispatch_inputs~,
+    step_outputs=state.step_outputs,
+    step_outcomes=state.step_outcomes,
+    step_conclusions=state.step_conclusions,
+    workspace_root~,
+    env_context~,
+    job_context~,
+    vars_context~,
+    secrets_context~,
+    github_context~,
+    runner_context~,
+    needs_outputs~,
+    needs_results~,
+    success_value=step_if_success_value(state),
+    failure_value=step_if_failure_value(state),
+    cancelled_value=step_if_cancelled_value(state),
+  )
+  if if_condition_supported(expression) {
+    return if_condition_value_to_string(
+      if_condition_atom_value(expression, context),
+    )
+  }
+  match if_logical_expression_value(expression, context) {
     Some(value) => return if_condition_value_to_string(value)
     None => ()
   }
@@ -1499,25 +1504,7 @@ fn resolve_expression_value(
       return map_get_case_insensitive(runner_context, name).unwrap_or("")
     None => ()
   }
-  match
-    evaluate_string_function_expression(
-      expression,
-      new_if_condition_context(
-        dispatch_inputs~,
-        step_outputs=state.step_outputs,
-        step_outcomes=state.step_outcomes,
-        step_conclusions=state.step_conclusions,
-        workspace_root~,
-        env_context~,
-        job_context~,
-        vars_context~,
-        secrets_context~,
-        github_context~,
-        runner_context~,
-        needs_outputs~,
-        needs_results~,
-      ),
-    ) {
+  match evaluate_string_function_expression(expression, context) {
     Some(value) => return value
     None => ()
   }

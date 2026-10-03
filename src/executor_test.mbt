@@ -7012,3 +7012,53 @@ async test "executor: supplied workflow inputs reach env and action arguments" {
   assert_eq(expect_task_report(report, "a/upload").stderr, "")
   assert_eq(expect_task_report(report, "a/upload").status, "success")
 }
+
+///|
+#cfg(target="native")
+async test "executor: action defaults evaluate standalone booleans and interpolation sees job status" {
+  let workspace = prepare_workspace("executor-boolean-defaults")
+  ensure_dir(workspace + "/action")
+  @xfs.write_string_to_file(
+    workspace + "/action/action.yml",
+    (
+      #|name: Example
+      #|inputs:
+      #|  comparison:
+      #|    default: ${{ github.event_name == 'push' }}
+      #|  negation:
+      #|    default: ${{ !true }}
+      #|  literal:
+      #|    default: ${{ false }}
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - id: show
+      #|      shell: bash
+      #|      env:
+      #|        COMPARISON: ${{ inputs.comparison }}
+      #|        NEGATION: ${{ inputs.negation }}
+      #|        LITERAL: ${{ inputs.literal }}
+      #|      run: printf '%s/%s/%s' "$COMPARISON" "$NEGATION" "$LITERAL"
+    ),
+  )
+  let workflow = new_workflow("ci", [
+    new_job("a", [new_uses_step("action", "./action")]),
+    new_job("b", [
+      new_run_step("fail", "exit 1"),
+      new_run_step(
+        "status",
+        "printf '%s/%s' '${{ failure() }}' '${{ success() }}'",
+        if_condition="always()",
+      ),
+    ]),
+  ])
+  let report = execute_lowered_native(
+    lower_push_workflow_in_workspace(workflow, workspace),
+    workspace_root=workspace,
+  )
+  assert_eq(
+    expect_task_report(report, "a/action__show").stdout,
+    "true/false/false",
+  )
+  assert_eq(expect_task_report(report, "b/status").stdout, "true/false")
+}
