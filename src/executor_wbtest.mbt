@@ -610,6 +610,27 @@ async test "artifact upload excludes hidden runner temp entries unless enabled" 
     )
     assert_eq(selection.file_paths.length(), 3)
   }
+
+  for
+    input in [
+      temporary + "/reports/.env",
+      temporary + "/reports/.hidden",
+      temporary + "/reports/.hidden/*",
+    ] {
+    let excluded = artifact_select_upload_files(
+      workspace,
+      [input],
+      runner_temp=temporary,
+    )
+    assert_eq(excluded.file_paths.length(), 0)
+    let included = artifact_select_upload_files(
+      workspace,
+      [input],
+      runner_temp=temporary,
+      include_hidden=true,
+    )
+    assert_eq(included.file_paths.length(), 1)
+  }
   wbtest_cleanup(root)
 }
 
@@ -635,5 +656,25 @@ async test "artifact upload validates absolute glob roots before selecting works
   ])
   assert_eq(accepted.file_paths.length(), 1)
   assert_true(accepted.file_paths[0].has_suffix("/reports/result.txt"))
+  wbtest_cleanup(root)
+}
+
+///|
+async test "artifact upload retains in-boundary symlink aliases while stopping cycles" {
+  let root = wbtest_setup_tmpdir()
+  let workspace = root + "/workspace"
+  let temporary = root + "/temp"
+  let _ = wbtest_run("mkdir", ["-p", workspace, temporary + "/actual"])
+  @xfs.write_string_to_file(temporary + "/actual/result.txt", "result")
+  let _ = wbtest_run("ln", ["-s", temporary + "/actual", temporary + "/link"])
+  let _ = wbtest_run("ln", ["-s", temporary, temporary + "/actual/cycle"])
+  let selection = artifact_select_upload_files(
+    workspace,
+    [temporary + "/l*/**"],
+    runner_temp=temporary,
+  )
+  assert_eq(selection.invalid_path, None)
+  assert_eq(selection.file_paths.length(), 1)
+  assert_true(selection.file_paths[0].has_suffix("/link/result.txt"))
   wbtest_cleanup(root)
 }
