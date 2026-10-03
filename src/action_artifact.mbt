@@ -164,12 +164,19 @@ fn artifact_match_path_segments(
   pattern_index : Int,
   segments : Array[String],
   segment_index : Int,
+  prefix? : Bool = false,
 ) -> Bool {
+  if prefix && segment_index >= segments.length() {
+    return pattern_index < patterns.length()
+  }
   if pattern_index >= patterns.length() {
     return segment_index >= segments.length()
   }
   let pattern = patterns[pattern_index]
   if pattern == "**" {
+    if prefix {
+      return true
+    }
     let mut next_index = segment_index
     while true {
       if artifact_match_path_segments(
@@ -177,6 +184,7 @@ fn artifact_match_path_segments(
           pattern_index + 1,
           segments,
           next_index,
+          prefix~,
         ) {
         return true
       }
@@ -196,6 +204,7 @@ fn artifact_match_path_segments(
         pattern_index + 1,
         segments,
         segment_index + 1,
+        prefix~,
       )
     } else {
       false
@@ -233,6 +242,8 @@ async fn artifact_collect_absolute_files(
   include_hidden? : Bool = false,
   boundary~ : String,
   visited? : Map[String, Bool] = Map([]),
+  pattern_segments? : Array[String]? = None,
+  excluded_patterns? : Array[String] = [],
 ) -> Bool {
   guard validate_workspace_path_real(boundary, current_abs) is Some(real_path) else {
     return false
@@ -252,16 +263,34 @@ async fn artifact_collect_absolute_files(
       continue
     }
     let next_abs = artifact_path_join(current_abs, entry)
+    if excluded_patterns.any(fn(pattern) {
+        artifact_path_matches(pattern, next_abs)
+      }) {
+      continue
+    }
+    let is_directory = exec_is_dir(next_abs)
+    if pattern_segments is Some(patterns) &&
+      !artifact_match_path_segments(
+        patterns,
+        0,
+        artifact_split_path(next_abs),
+        0,
+        prefix=is_directory,
+      ) {
+      continue
+    }
     if validate_workspace_path_real(boundary, next_abs) is None {
       return false
     }
-    if exec_is_dir(next_abs) {
+    if is_directory {
       if !artifact_collect_absolute_files(
           next_abs,
           files,
           include_hidden~,
           boundary~,
           visited~,
+          pattern_segments~,
+          excluded_patterns~,
         ) {
         return false
       }
@@ -339,6 +368,11 @@ async fn artifact_select_upload_files(
     let path = raw_path.trim(chars=" \t\r\n").to_owned()
     if path.has_prefix("!") {
       excluded_patterns.push(exec_text_slice(path, 1, path.length()))
+    }
+  }
+  for raw_path in upload_paths {
+    let path = raw_path.trim(chars=" \t\r\n").to_owned()
+    if path.has_prefix("!") {
       continue
     }
     let absolute_path = artifact_canonical_path(
@@ -358,6 +392,20 @@ async fn artifact_select_upload_files(
     } else {
       return { root_paths: [], file_paths: [], invalid_path: Some(path), }
     }
+    let exclusion_base = if validate_workspace_path(workspace_root, root)
+      is Some(_) {
+      workspace_root
+    } else {
+      boundary
+    }
+    let exclusions = excluded_patterns.map(fn(pattern) {
+      artifact_canonical_path(
+        absolute_exec_path(resolve_task_cwd(exclusion_base, pattern)),
+      )
+    })
+    if exclusions.any(fn(pattern) { artifact_path_matches(pattern, root) }) {
+      continue
+    }
     if !include_hidden && artifact_path_is_hidden(boundary, root) {
       continue
     }
@@ -375,13 +423,17 @@ async fn artifact_select_upload_files(
           files,
           include_hidden~,
           boundary~,
+          excluded_patterns=exclusions,
+          pattern_segments=if glob {
+            Some(artifact_split_path(absolute_path))
+          } else {
+            None
+          },
         ) {
         return { root_paths: [], file_paths: [], invalid_path: Some(path), }
       }
       for file in files {
-        if !glob || artifact_path_matches(absolute_path, file) {
-          included_files[file] = true
-        }
+        included_files[file] = true
       }
     } else {
       included_roots.push(artifact_canonical_path(artifact_parent_dir(root)))
@@ -390,32 +442,7 @@ async fn artifact_select_upload_files(
   }
   let selected_files : Array[String] = []
   for absolute_path, _ in included_files {
-    let mut excluded = false
-    for pattern in excluded_patterns {
-      let relative_path = match
-        workspace_relative_store_path(workspace_root, absolute_path) {
-        Some(path) => Some(path)
-        None =>
-          if runner_temp.length() > 0 {
-            workspace_relative_store_path(runner_temp, absolute_path)
-          } else {
-            None
-          }
-      }
-      let candidate = if pattern.has_prefix("/") {
-        Some(absolute_path)
-      } else {
-        relative_path
-      }
-      guard candidate is Some(path) else { continue }
-      if artifact_path_matches(pattern, path) {
-        excluded = true
-        break
-      }
-    }
-    if !excluded {
-      selected_files.push(absolute_path)
-    }
+    selected_files.push(absolute_path)
   }
   selected_files.sort_by(String::lexical_compare)
   {

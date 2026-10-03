@@ -702,3 +702,50 @@ async test "artifact upload relative globs stop cycles inside workspace runner t
   assert_true(selection.file_paths[0].has_suffix("/temp/result.txt"))
   wbtest_cleanup(workspace)
 }
+
+///|
+async test "artifact upload globs ignore descendants and files that cannot match" {
+  let root = wbtest_setup_tmpdir()
+  let workspace = root + "/workspace"
+  let outside = root + "/outside"
+  let _ = wbtest_run("mkdir", [
+    "-p",
+    workspace + "/reports/archive",
+    workspace + "/reports/matching",
+    outside,
+  ])
+  @xfs.write_string_to_file(workspace + "/reports/result.txt", "result")
+  @xfs.write_string_to_file(
+    workspace + "/reports/matching/nested.txt",
+    "nested",
+  )
+  @xfs.write_string_to_file(outside + "/secret.txt", "private")
+  let _ = wbtest_run("ln", ["-s", outside, workspace + "/reports/archive/link"])
+  let _ = wbtest_run("ln", [
+    "-s",
+    outside + "/secret.txt",
+    workspace + "/reports/decoy.key",
+  ])
+  for prefix in ["", workspace + "/"] {
+    for
+      (pattern, expected) in [
+        ("reports/*.txt", "/reports/result.txt"),
+        ("reports/match*/*.txt", "/reports/matching/nested.txt"),
+      ] {
+      let selection = artifact_select_upload_files(workspace, [prefix + pattern])
+      assert_eq(selection.invalid_path, None)
+      assert_eq(selection.file_paths.length(), 1)
+      assert_true(selection.file_paths[0].has_suffix(expected))
+    }
+  }
+  for prefix in ["", workspace + "/"] {
+    let selection = artifact_select_upload_files(workspace, [
+      prefix + "reports/**/*",
+      "!" + prefix + "reports/archive/**",
+      "!" + prefix + "reports/decoy.key",
+    ])
+    assert_eq(selection.invalid_path, None)
+    assert_eq(selection.file_paths.length(), 2)
+  }
+  wbtest_cleanup(root)
+}

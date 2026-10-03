@@ -1636,7 +1636,9 @@ fn resolve_plan_env(
         needs_results,
         dispatch_inputs~,
       )
-      record_yaml_coverage(plan.env, "env." + key)
+      if pass == 0 {
+        record_yaml_coverage(plan.env, "env." + key)
+      }
     }
     for key, value in state.env_updates {
       next[key] = value
