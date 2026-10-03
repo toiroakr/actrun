@@ -7062,3 +7062,149 @@ async test "executor: action defaults evaluate standalone booleans and interpola
   )
   assert_eq(expect_task_report(report, "b/status").stdout, "true/false")
 }
+
+///|
+#cfg(target="native")
+async test "executor: a false nested composite condition skips even always steps" {
+  let workspace = prepare_workspace("executor-nested-composite-if")
+  ensure_dir(workspace + "/outer")
+  ensure_dir(workspace + "/inner")
+  @xfs.write_string_to_file(
+    workspace + "/outer/action.yml",
+    (
+      #|name: Outer
+      #|inputs:
+      #|  enabled:
+      #|    default: ''
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - id: nested
+      #|      if: inputs.enabled != ''
+      #|      uses: $/inner
+      #|    - id: after
+      #|      shell: bash
+      #|      run: echo '${{ steps.nested.outcome }}'
+    ),
+  )
+  @xfs.write_string_to_file(
+    workspace + "/inner/action.yml",
+    (
+      #|name: Inner
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - id: echo
+      #|      if: always()
+      #|      shell: bash
+      #|      run: echo should-not-run
+    ),
+  )
+  let report = execute_lowered_native(
+    lower_push_workflow_in_workspace(
+      new_workflow("ci", [new_job("a", [new_uses_step("outer", "./outer")])]),
+      workspace,
+    ),
+    workspace_root=workspace,
+  )
+  assert_eq(
+    expect_task_report(report, "a/outer__nested__echo").status,
+    "skipped",
+  )
+  assert_eq(expect_task_report(report, "a/outer__after").stdout, "skipped\n")
+  assert_true(report.ok)
+}
+
+///|
+#cfg(target="native")
+async test "executor: a top-level composite condition blocks every nested descendant" {
+  let workspace = prepare_workspace("executor-top-composite-if")
+  ensure_dir(workspace + "/outer")
+  ensure_dir(workspace + "/inner")
+  @xfs.write_string_to_file(
+    workspace + "/outer/action.yml",
+    (
+      #|name: Outer
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - id: nested
+      #|      if: always()
+      #|      uses: $/inner
+    ),
+  )
+  @xfs.write_string_to_file(
+    workspace + "/inner/action.yml",
+    (
+      #|name: Inner
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - id: echo
+      #|      if: always()
+      #|      shell: bash
+      #|      run: echo should-not-run
+    ),
+  )
+  let report = execute_lowered_native(
+    lower_push_workflow_in_workspace(
+      new_workflow("ci", [
+        new_job("a", [
+          new_uses_step("outer", "./outer", if_condition="false"),
+          new_run_step("after", "echo '${{ steps.outer.outcome }}'"),
+        ]),
+      ]),
+      workspace,
+    ),
+    workspace_root=workspace,
+  )
+  assert_eq(
+    expect_task_report(report, "a/outer__nested__echo").status,
+    "skipped",
+  )
+  assert_eq(expect_task_report(report, "a/after").stdout, "skipped\n")
+  assert_true(report.ok)
+}
+
+///|
+#cfg(target="native")
+async test "executor: a composite call condition is not reevaluated after inner env updates" {
+  let workspace = prepare_workspace("executor-composite-if-once")
+  ensure_dir(workspace + "/action")
+  @xfs.write_string_to_file(
+    workspace + "/action/action.yml",
+    (
+      #|name: Example
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - id: change
+      #|      shell: bash
+      #|      run: echo 'ENABLED=false' >> "$GITHUB_ENV"
+      #|    - id: echo
+      #|      shell: bash
+      #|      run: echo ran
+    ),
+  )
+  let report = execute_lowered_native(
+    lower_push_workflow_in_workspace(
+      new_workflow("ci", [
+        new_job(
+          "a",
+          [
+            new_uses_step(
+              "action",
+              "./action",
+              if_condition="env.ENABLED == 'true'",
+            ),
+          ],
+          env={ "ENABLED": "true" },
+        ),
+      ]),
+      workspace,
+    ),
+    workspace_root=workspace,
+  )
+  assert_eq(expect_task_report(report, "a/action__echo").stdout, "ran\n")
+  assert_true(report.ok)
+}
