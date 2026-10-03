@@ -868,7 +868,7 @@ async fn apply_local_context_defaults(
       after_sha
     }
   }
-  let actor = if base.actor.length() > 0 {
+  let actor = if base.actor.length() > 0 || base.payload is Some(_) {
     base.actor
   } else if local_context.actor.length() > 0 {
     local_context.actor
@@ -882,6 +882,7 @@ async fn apply_local_context_defaults(
     after_sha~,
     repository~,
     actor~,
+    payload=base.payload,
   )
 }
 
@@ -922,6 +923,7 @@ fn merge_cli_push_event(
     after_sha~,
     repository~,
     actor=base.actor,
+    payload=base.payload,
   )
 }
 
@@ -7839,6 +7841,7 @@ async fn run_workflow_in_execution_root(
       after_sha=workspace.commit_sha,
       repository~,
       actor=trigger_event.actor,
+      payload=trigger_event.payload,
     )
     if changed_paths.length() == 0 {
       let changed_result = @ar.compute_bit_changed_paths_native(
@@ -7856,6 +7859,7 @@ async fn run_workflow_in_execution_root(
         after_sha=changed_result.head_sha,
         repository~,
         actor=trigger_event.actor,
+        payload=trigger_event.payload,
       )
     } else {
       trigger_event = @ar.new_push_event(
@@ -7865,6 +7869,7 @@ async fn run_workflow_in_execution_root(
         after_sha=workspace.commit_sha,
         repository~,
         actor=trigger_event.actor,
+        payload=trigger_event.payload,
       )
     }
   }

@@ -164,6 +164,7 @@ pub struct PushEvent {
   changed_paths : Array[String]
   repository : String
   actor : String
+  payload : Json?
 }
 
 ///|
@@ -174,8 +175,17 @@ pub fn new_push_event(
   after_sha? : String = "",
   repository? : String = "",
   actor? : String = "",
+  payload? : Json? = None,
 ) -> PushEvent {
-  { ref_name, before_sha, after_sha, changed_paths, repository, actor, }
+  {
+    ref_name,
+    before_sha,
+    after_sha,
+    changed_paths,
+    repository,
+    actor,
+    payload,
+  }
 }
 
 ///|

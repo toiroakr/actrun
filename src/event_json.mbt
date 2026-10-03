@@ -159,6 +159,7 @@ pub fn parse_github_push_event_json(text : String) -> PushEventJsonParseResult {
         after_sha~,
         repository~,
         actor~,
+        payload=Some(payload),
       ),
     ),
     errors: [],

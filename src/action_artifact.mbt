@@ -60,6 +60,7 @@ fn artifact_store_root(workspace_root : String) -> String {
 priv struct ArtifactUploadSelection {
   root_paths : Array[String]
   file_paths : Array[String]
+  invalid_path : String?
 }
 
 ///|
@@ -253,10 +254,21 @@ fn artifact_collect_relative_files(
 }
 
 ///|
-fn artifact_collect_absolute_files(
+async fn artifact_collect_absolute_files(
   current_abs : String,
   files : Array[String],
-) -> Unit {
+  boundary? : String = "",
+  visited? : Map[String, Bool] = Map([]),
+) -> Bool {
+  if boundary.length() > 0 {
+    guard validate_workspace_path_real(boundary, current_abs) is Some(real) else {
+      return false
+    }
+    if visited.contains(real) {
+      return true
+    }
+    visited[real] = true
+  }
   let entries = try @xfs.read_dir(current_abs) catch {
     _ => []
   } noraise {
@@ -265,12 +277,19 @@ fn artifact_collect_absolute_files(
   entries.sort_by(String::lexical_compare)
   for entry in entries {
     let next_abs = artifact_path_join(current_abs, entry)
+    if boundary.length() > 0 &&
+      validate_workspace_path_real(boundary, next_abs) is None {
+      return false
+    }
     if exec_is_dir(next_abs) {
-      artifact_collect_absolute_files(next_abs, files)
+      if !artifact_collect_absolute_files(next_abs, files, boundary~, visited~) {
+        return false
+      }
     } else {
       files.push(next_abs)
     }
   }
+  true
 }
 
 ///|
@@ -340,10 +359,11 @@ fn artifact_common_ancestor(paths : Array[String]) -> String {
 }
 
 ///|
-fn artifact_select_upload_files(
+async fn artifact_select_upload_files(
   workspace_root : String,
   upload_paths : Array[String],
   include_hidden? : Bool = false,
+  runner_temp? : String = "",
 ) -> ArtifactUploadSelection {
   let included_roots : Array[String] = []
   let included_files : Map[String, Bool] = Map([])
@@ -361,10 +381,35 @@ fn artifact_select_upload_files(
     if artifact_has_wildcard(path) {
       let root_relative = artifact_glob_root(path)
       let root_abs = artifact_canonical_path(
-        resolve_task_cwd(workspace_root, root_relative),
+        resolve_task_cwd(
+          workspace_root,
+          if path.has_prefix("/") {
+            "/" + root_relative
+          } else {
+            root_relative
+          },
+        ),
       )
       if @xfs.path_exists(root_abs) {
         included_roots.push(root_abs)
+      }
+      if runner_temp.length() > 0 &&
+        path.has_prefix("/") &&
+        validate_workspace_path(runner_temp, root_abs) is Some(_) {
+        let files : Array[String] = []
+        if !artifact_collect_absolute_files(
+            root_abs,
+            files,
+            boundary=runner_temp,
+          ) {
+          return { root_paths: [], file_paths: [], invalid_path: Some(path), }
+        }
+        for file in files {
+          if artifact_path_matches(path, file) {
+            included_files[file] = true
+          }
+        }
+        continue
       }
       for relative_path in workspace_files {
         if artifact_path_matches(path, relative_path) {
@@ -375,9 +420,13 @@ fn artifact_select_upload_files(
       }
       continue
     }
-    // Reject paths that escape the workspace
-    guard validate_workspace_path(workspace_root, path) is Some(_) else {
-      continue
+    let in_workspace = validate_workspace_path(workspace_root, path) is Some(_)
+    let in_runner_temp = runner_temp.length() > 0 &&
+      path.has_prefix("/") &&
+      validate_workspace_path(runner_temp, path) is Some(_)
+    guard in_workspace || in_runner_temp else { continue }
+    if !in_workspace && validate_workspace_path_real(runner_temp, path) is None {
+      return { root_paths: [], file_paths: [], invalid_path: Some(path), }
     }
     let resolved_path = resolve_task_cwd(workspace_root, path)
     if !@xfs.path_exists(resolved_path) {
@@ -387,7 +436,13 @@ fn artifact_select_upload_files(
     if exec_is_dir(absolute_path) {
       included_roots.push(absolute_path)
       let child_files : Array[String] = []
-      artifact_collect_absolute_files(absolute_path, child_files)
+      if !artifact_collect_absolute_files(
+          absolute_path,
+          child_files,
+          boundary=if in_workspace { "" } else { runner_temp },
+        ) {
+        return { root_paths: [], file_paths: [], invalid_path: Some(path), }
+      }
       for child in child_files {
         included_files[child] = true
       }
@@ -401,11 +456,23 @@ fn artifact_select_upload_files(
   for absolute_path, _ in included_files {
     let mut excluded = false
     for pattern in excluded_patterns {
-      guard workspace_relative_store_path(workspace_root, absolute_path)
-        is Some(relative_path) else {
-        continue
+      let relative_path = match
+        workspace_relative_store_path(workspace_root, absolute_path) {
+        Some(path) => Some(path)
+        None =>
+          if runner_temp.length() > 0 {
+            workspace_relative_store_path(runner_temp, absolute_path)
+          } else {
+            None
+          }
       }
-      if artifact_path_matches(pattern, relative_path) {
+      let candidate = if pattern.has_prefix("/") {
+        Some(absolute_path)
+      } else {
+        relative_path
+      }
+      guard candidate is Some(path) else { continue }
+      if artifact_path_matches(pattern, path) {
         excluded = true
         break
       }
@@ -415,14 +482,19 @@ fn artifact_select_upload_files(
     }
   }
   selected_files.sort_by(String::lexical_compare)
-  { root_paths: included_roots, file_paths: selected_files, }
+  {
+    root_paths: included_roots,
+    file_paths: selected_files,
+    invalid_path: None,
+  }
 }
 
 ///|
-fn execute_upload_artifact_native(
+async fn execute_upload_artifact_native(
   plan : TaskPlan,
   workspace_root : String,
   resolved_plan_env : Map[String, String],
+  runner_temp? : String = "",
 ) -> TaskRunReport {
   let name = resolved_plan_env.get("INPUT_NAME").unwrap_or("")
   let path_input = resolved_plan_env.get("INPUT_PATH").unwrap_or("")
@@ -450,7 +522,15 @@ fn execute_upload_artifact_native(
     workspace_root,
     upload_paths,
     include_hidden~,
+    runner_temp~,
   )
+  if selection.invalid_path is Some(path) {
+    return task_report_failure(
+      plan,
+      workspace_root,
+      "upload-artifact path escapes runner temp: " + path,
+    )
+  }
   let if_no_files_found = match
     parse_artifact_if_no_files_found(
       resolved_plan_env.get("INPUT_IF_NO_FILES_FOUND").unwrap_or(""),

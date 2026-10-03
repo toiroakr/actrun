@@ -316,7 +316,7 @@ async fn exec_git_update_submodules(
 /// Overwrite tracked files from clone into dst without deleting anything.
 /// Preserves all existing files including .git, untracked files, and
 /// tracked files that are not in the clone.
-fn exec_overwrite_from_clone(src : String, dst : String) -> Bool {
+async fn exec_overwrite_from_clone(src : String, dst : String) -> Bool {
   if !ensure_exec_dir_recursive(dst) {
     return false
   }
@@ -330,7 +330,8 @@ fn exec_overwrite_from_clone(src : String, dst : String) -> Bool {
     if entry == ".git" {
       continue
     }
-    if !exec_copy_tree(src + "/" + entry, dst + "/" + entry) {
+    let (code, _, _) = run_command("cp", ["-pR", src + "/" + entry, dst])
+    if code != 0 {
       return false
     }
   }

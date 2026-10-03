@@ -85,7 +85,7 @@ pub fn new_local_action(Array[StepSpec], name? : String, inputs? : Map[String, S
 
 pub fn new_permissions_spec(values? : Map[String, String]) -> PermissionsSpec
 
-pub fn new_push_event(String, Array[String], before_sha? : String, after_sha? : String, repository? : String, actor? : String) -> PushEvent
+pub fn new_push_event(String, Array[String], before_sha? : String, after_sha? : String, repository? : String, actor? : String, payload? : Json?) -> PushEvent
 
 pub fn new_push_trigger(branches? : Array[String], branches_ignore? : Array[String], paths? : Array[String], paths_ignore? : Array[String], tags? : Array[String], tags_ignore? : Array[String]) -> PushTrigger
 
@@ -347,6 +347,7 @@ pub struct PushEvent {
   changed_paths : Array[String]
   repository : String
   actor : String
+  payload : Json?
 }
 
 pub struct PushEventJsonParseResult {

@@ -59,6 +59,103 @@ fn composite_step_id(outer_step_id : String, inner_step_id : String) -> String {
 }
 
 ///|
+fn scope_composite_expression(text : String, parent : String) -> String {
+  let chunks : Array[String] = []
+  let mut offset = 0
+  while offset < text.length() {
+    match find_substring(text, "steps.", offset) {
+      Some(pos) => {
+        chunks.push(text_slice(text, offset, pos))
+        if is_inside_expr_string_literal(text, pos) ||
+          (pos > 0 && is_context_ref_continuation(text, pos - 1)) {
+          chunks.push("steps.")
+        } else {
+          chunks.push("steps." + parent + "__")
+        }
+        offset = pos + 6
+      }
+      None => {
+        chunks.push(text_slice(text, offset, text.length()))
+        offset = text.length()
+      }
+    }
+  }
+  chunks.join("")
+}
+
+///|
+fn scope_composite_text(text : String, parent : String) -> String {
+  let chunks : Array[String] = []
+  let mut offset = 0
+  while offset < text.length() {
+    match find_substring(text, "${{", offset) {
+      Some(start) => {
+        chunks.push(text_slice(text, offset, start + 3))
+        let mut end = start + 3
+        let mut quoted = false
+        while end + 1 < text.length() {
+          if text.unsafe_get(end) == '\'' {
+            if quoted && text.unsafe_get(end + 1) == '\'' {
+              end += 2
+              continue
+            }
+            quoted = !quoted
+          }
+          if !quoted &&
+            text.unsafe_get(end) == '}' &&
+            text.unsafe_get(end + 1) == '}' {
+            break
+          }
+          end += 1
+        }
+        if end + 1 < text.length() {
+          chunks.push(
+            scope_composite_expression(text_slice(text, start + 3, end), parent),
+          )
+          chunks.push("}}")
+          offset = end + 2
+        } else {
+          chunks.push(text_slice(text, start + 3, text.length()))
+          offset = text.length()
+        }
+      }
+      None => {
+        chunks.push(text_slice(text, offset, text.length()))
+        offset = text.length()
+      }
+    }
+  }
+  chunks.join("")
+}
+
+///|
+fn scope_composite_step(step : StepSpec, parent : String) -> StepSpec {
+  let env : Map[String, String] = Map([])
+  for key, value in step.env {
+    env[key] = scope_composite_text(value, parent)
+  }
+  let with_values : Map[String, String] = Map([])
+  for key, value in step.with_values {
+    with_values[key] = scope_composite_text(value, parent)
+  }
+  {
+    ..step,
+    run: step.run.map(value => scope_composite_text(value, parent)),
+    shell: step.shell.map(value => scope_composite_text(value, parent)),
+    working_directory: step.working_directory.map(value => {
+      scope_composite_text(value, parent)
+    }),
+    env,
+    with_values,
+    if_condition: scope_composite_expression(step.if_condition, parent),
+    continue_on_error: scope_composite_expression(
+      step.continue_on_error,
+      parent,
+    ),
+  }
+}
+
+///|
 fn lifecycle_step_id(step_id : String, phase : String) -> String {
   step_id + "__" + phase
 }
@@ -399,7 +496,13 @@ fn find_substring(text : String, pattern : String, start : Int) -> Int? {
 fn input_expr_name(expression : String) -> String? {
   let trimmed = expression.trim(chars=" \t\n\r").to_owned()
   if trimmed.has_prefix("inputs.") && trimmed.length() > 7 {
-    Some(text_slice(trimmed, 7, trimmed.length()))
+    let key = text_slice(trimmed, 7, trimmed.length())
+    for i in 0..<key.length() {
+      if !is_matrix_ident_code(key.unsafe_get(i)) {
+        return None
+      }
+    }
+    Some(key)
   } else {
     None
   }
@@ -607,7 +710,16 @@ fn substitute_inputs_text(
             let expression = text_slice(text, open_idx + 3, close_idx)
             match input_expr_name(expression) {
               Some(name) => chunks.push(inputs.get(name).unwrap_or(""))
-              None => chunks.push(text_slice(text, open_idx, close_idx + 2))
+              None => {
+                let scoped = substitute_context_refs_in_expr(
+                  expression,
+                  "inputs.",
+                  inputs,
+                  expand_expression_values=true,
+                )
+                let dollar = "$"
+                chunks.push(dollar + "{{" + scoped + "}}")
+              }
             }
             idx = close_idx + 2
           }
@@ -2108,27 +2220,12 @@ fn action_input_env(
 ) -> Map[String, String] {
   let env : Map[String, String] = Map([])
   for key, value in merge_env(defaults, overrides) {
-    // Resolve unresolved ${{ }} expressions in action.yml defaults
-    // github.token is resolved later in executor; keep it as-is
-    // Boolean-like expressions (== comparisons) default to "false"
-    // Other unresolved expressions default to empty string
-    let resolved_value = if value.contains("${{") {
-      if value.contains("github.token") {
-        value
-      } else if value.contains("==") {
-        "false"
-      } else {
-        ""
-      }
-    } else {
-      value
-    }
     let hyphen_name = action_input_env_name(key)
-    env[hyphen_name] = resolved_value
+    env[hyphen_name] = value
     // Also set underscore form for builtin action compatibility
     let underscore_name = action_input_env_name_underscore(key)
     if hyphen_name != underscore_name {
-      env[underscore_name] = resolved_value
+      env[underscore_name] = value
     }
   }
   env
@@ -2707,7 +2804,10 @@ fn lower_local_action(
   let outer_name = step_name(outer_step, outer_step_id)
   let mut inner_index = 0
   while inner_index < action.steps.length() {
-    let inner_step = action.steps[inner_index]
+    let inner_step = scope_composite_step(
+      action.steps[inner_index],
+      outer_step_id,
+    )
     if inner_step.uses is Some(uses) &&
       uses_matches_skip_pattern(uses, skip_actions) {
       let inner_name = if inner_step.name.length() > 0 {

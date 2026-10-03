@@ -5676,3 +5676,14 @@ async test "workflow run: a missing workflow file fails before starting a docker
   @debug.assert_eq(code, 1)
   assert_false(@xfs.path_exists(marker))
 }
+
+///|
+test "cli: event payload survives explicit context overrides" {
+  let payload : Json = { "pull_request": { "number": 42 } }
+  let base = @ar.new_push_event("main", [], payload=Some(payload))
+  let options = expect_cli_options(
+    parse_cli_args(["actrun", "workflow.yml", "--repository", "example/project"]),
+  )
+  let merged = merge_cli_push_event(base, options)
+  assert_eq(merged.payload.unwrap(), payload)
+}

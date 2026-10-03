@@ -6703,3 +6703,209 @@ async test "executor: format() in a condition does not expand placeholders insid
     ),
   )
 }
+
+///|
+#cfg(target="native")
+async test "executor: checkout preserves executable files and a clean git diff" {
+  let workspace = prepare_git_checkout_workspace("checkout-executable-mode")
+  @xfs.write_string_to_file(
+    workspace + "/tool.sh",
+    "#!/bin/sh\nprintf ready\\n\n",
+  )
+  executor_test_require_ok("chmod", "chmod", ["755", "tool.sh"], workspace)
+  executor_test_require_ok("git add", "git", ["add", "tool.sh"], workspace)
+  executor_test_require_ok(
+    "git commit",
+    "git",
+    ["commit", "-qm", "executable fixture"],
+    workspace,
+  )
+  let workflow = new_workflow("ci", [
+    new_job(
+      "build",
+      [
+        new_uses_step("checkout", "actions/checkout@v4", with_values={
+          "path": "repo",
+        }),
+        new_run_step(
+          "verify",
+          "test -x repo/tool.sh && test ! -x repo/tracked.txt && git -C repo diff --exit-code",
+          shell=Some("bash"),
+        ),
+      ],
+      defaults=new_run_defaults(shell=Some("bash")),
+    ),
+  ])
+  let report = execute_lowered_native(
+    lower_push_workflow(workflow),
+    workspace_root=workspace,
+  )
+  @debug.assert_eq(
+    expect_task_report(report, "build/checkout").status,
+    "success",
+  )
+  @debug.assert_eq(expect_task_report(report, "build/verify").status, "success")
+}
+
+///|
+#cfg(target="native")
+async test "executor: YAML coverage distinguishes skipped fields and condition outcomes" {
+  let workspace = prepare_workspace("yaml-coverage")
+  let directory = workspace + "/coverage"
+  ensure_dir(directory)
+  for file in @xfs.read_dir(directory) {
+    @xfs.remove_file(directory + "/" + file)
+  }
+  let previous = executor_test_set_env_var("ACTRUN_COVERAGE_DIR", directory)
+  let workflow = new_workflow("ci", [
+    new_job("a", [
+      new_run_step(
+        "yes",
+        "printf '%s' \"$VALUE\"",
+        env={ "ACTRUN_COVERAGE_STEP": "yes", "VALUE": "sensitive-value" },
+        if_condition="true",
+      ),
+      new_run_step(
+        "no",
+        "exit 99",
+        env={ "ACTRUN_COVERAGE_STEP": "no", "VALUE": "sensitive-value" },
+        if_condition="false",
+      ),
+    ]),
+  ])
+  let report = execute_lowered_native(
+    lower_push_workflow(workflow),
+    workspace_root=workspace,
+  )
+  executor_test_restore_env_var("ACTRUN_COVERAGE_DIR", previous)
+  @debug.assert_eq(expect_task_report(report, "a/yes").status, "success")
+  @debug.assert_eq(expect_task_report(report, "a/no").status, "skipped")
+  @debug.assert_eq(@xfs.path_exists(directory + "/yes-if-true.json"), true)
+  @debug.assert_eq(@xfs.path_exists(directory + "/no-if-false.json"), true)
+  @debug.assert_eq(
+    @xfs.path_exists(directory + "/yes-env.VALUE-seen.json"),
+    true,
+  )
+  @debug.assert_eq(
+    @xfs.path_exists(directory + "/no-env.VALUE-seen.json"),
+    false,
+  )
+  @debug.assert_eq(@xfs.path_exists(directory + "/no-run-seen.json"), false)
+  for file in @xfs.read_dir(directory) {
+    @debug.assert_eq(
+      @xfs.read_file_to_string(directory + "/" + file).contains(
+        "sensitive-value",
+      ),
+      false,
+    )
+  }
+}
+
+///|
+#cfg(target="native")
+async test "executor: composite sibling output references retain their local scope" {
+  let workspace = prepare_workspace("executor-composite-sibling-scope")
+  ensure_dir(workspace + "/action")
+  @xfs.write_string_to_file(
+    workspace + "/action/action.yml",
+    (
+      #|name: Example
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - id: make-value
+      #|      shell: bash
+      #|      run: echo 'value=inner' >> "$GITHUB_OUTPUT"
+      #|    - id: consume
+      #|      if: steps.make-value.outputs.value == 'inner'
+      #|      shell: bash
+      #|      env:
+      #|        VALUE: ${{ steps.make-value.outputs.value }}
+      #|      run: printf '%s/%s' "$VALUE" "${{ format('steps.literal {0}', steps.make-value.outputs.value) }}"
+    ),
+  )
+  let workflow = new_workflow("ci", [
+    new_job("build", [
+      new_run_step("make-value", "echo 'value=outer' >> \"$GITHUB_OUTPUT\""),
+      new_uses_step("example", "./action"),
+    ]),
+  ])
+  let lowered = lower_push_workflow_in_workspace(workflow, workspace)
+  let report = execute_lowered_native(lowered, workspace_root=workspace)
+  assert_eq(
+    expect_task_report(report, "build/example__consume").stdout,
+    "inner/steps.literal inner",
+  )
+}
+
+///|
+#cfg(target="native")
+async test "executor: event payload fields remain available to expressions" {
+  let workspace = prepare_workspace("executor-event-payload-context")
+  let parsed = parse_github_push_event_json(
+    (
+      #|{"ref":"refs/heads/feature","before":"a","after":"b","pull_request":{"number":42,"base":{"ref":"main"},"head":{"ref":"feature","sha":"abc"}}}
+    ),
+  )
+  let event = parsed.event.unwrap()
+  let workflow = new_workflow("ci", [
+    new_job("build", [
+      new_run_step(
+        "show", "printf '%s/%s/%s' '${{ github.event.pull_request.number }}' '${{ github.base_ref }}' '${{ github.event.pull_request.head.sha }}'",
+      ),
+    ]),
+  ])
+  let lowered = lower_push_workflow_in_workspace(workflow, workspace)
+  let report = execute_lowered_native(
+    lowered,
+    workspace_root=workspace,
+    push_event=Some(event),
+  )
+  assert_eq(expect_task_report(report, "build/show").stdout, "42/main/abc")
+}
+
+///|
+#cfg(target="native")
+async test "executor: composite forwards interpolated input to builtin action" {
+  let workspace = prepare_workspace("executor-composite-builtin-input")
+  ensure_dir(workspace + "/action")
+  @xfs.write_string_to_file(workspace + "/artifact.txt", "example")
+  @xfs.write_string_to_file(
+    workspace + "/action/action.yml",
+    (
+      #|name: Example
+      #|inputs:
+      #|  artifact-name:
+      #|    required: true
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - id: produce
+      #|      shell: bash
+      #|      run: |
+      #|        printf example > "$RUNNER_TEMP/artifact.txt"
+      #|        echo "path=$RUNNER_TEMP/artifact.txt" >> "$GITHUB_OUTPUT"
+      #|    - id: upload
+      #|      uses: actions/upload-artifact@v4
+      #|      with:
+      #|        name: ${{ inputs.artifact-name }}
+      #|        path: ${{ steps.produce.outputs.path }}
+      #|        if-no-files-found: error
+    ),
+  )
+  let workflow = new_workflow("ci", [
+    new_job("build", [
+      new_uses_step("example", "./action", with_values={
+        "artifact-name": "bundle-${{ github.run_id }}",
+      }),
+    ]),
+  ])
+  let report = execute_lowered_native(
+    lower_push_workflow_in_workspace(workflow, workspace),
+    workspace_root=workspace,
+  )
+  assert_eq(
+    expect_task_report(report, "build/example__upload").status,
+    "success",
+  )
+}

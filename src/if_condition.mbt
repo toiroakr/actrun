@@ -789,10 +789,54 @@ fn if_condition_value_from_json(json : Json) -> ConditionValue {
 }
 
 ///|
+fn if_logical_expression_value(
+  text : String,
+  ctx : IfConditionContext,
+) -> ConditionValue? {
+  let trimmed = strip_if_outer_parens(text)
+  match find_top_level_if_operator(trimmed, "||") {
+    Some(index) => {
+      let left = if_condition_atom_value(if_text_slice(trimmed, 0, index), ctx)
+      return Some(
+        if if_condition_value_truthy(left) {
+          left
+        } else {
+          if_condition_atom_value(
+            if_text_slice(trimmed, index + 2, trimmed.length()),
+            ctx,
+          )
+        },
+      )
+    }
+    None => ()
+  }
+  match find_top_level_if_operator(trimmed, "&&") {
+    Some(index) => {
+      let left = if_condition_atom_value(if_text_slice(trimmed, 0, index), ctx)
+      Some(
+        if if_condition_value_truthy(left) {
+          if_condition_atom_value(
+            if_text_slice(trimmed, index + 2, trimmed.length()),
+            ctx,
+          )
+        } else {
+          left
+        },
+      )
+    }
+    None => None
+  }
+}
+
+///|
 fn if_expression_function_value(
   text : String,
   ctx : IfConditionContext,
 ) -> ConditionValue? {
+  match if_logical_expression_value(text, ctx) {
+    Some(value) => return Some(value)
+    None => ()
+  }
   match if_function_arguments(text, "contains", 2) {
     Some(args) => {
       let haystack = if_condition_atom_value(args[0], ctx)
@@ -942,6 +986,19 @@ fn if_condition_atom_value(
   text : String,
   ctx : IfConditionContext,
 ) -> ConditionValue {
+  let text = strip_if_outer_parens(text)
+  match if_logical_expression_value(text, ctx) {
+    Some(value) => return value
+    None => ()
+  }
+  if text.has_prefix("!") ||
+    ["!=", "==", ">=", "<=", ">", "<"].any(op => {
+      find_top_level_if_operator(text, op) is Some(_)
+    }) {
+    return if_condition_value_from_json(
+      Json::boolean(eval_if_condition_bool(text, ctx)),
+    )
+  }
   match if_bool_literal(text) {
     Some(value) => return if_condition_value_from_json(Json::boolean(value))
     None => ()
@@ -952,7 +1009,9 @@ fn if_condition_atom_value(
   }
   if if_number_literal(text) {
     let trimmed = text.trim(chars=" \t\n\r").to_owned()
-    return if_condition_value_from_json(Json::string(trimmed))
+    return if_condition_value_from_json(
+      Json::number(try_parse_double(trimmed).unwrap_or(0.0)),
+    )
   }
   match if_expression_function_value(text, ctx) {
     Some(value) => return value

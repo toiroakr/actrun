@@ -414,3 +414,19 @@ test "is_path_traversal: dot-dot at end" {
 test "is_path_traversal: single dot" {
   @debug.debug_inspect(is_path_traversal("."), content="false")
 }
+
+///|
+test "composite input fallback remains an expression after substitution" {
+  assert_eq(
+    substitute_inputs_text("${{ inputs.choice || github.event.number }}", {
+      "choice": "",
+    }),
+    "${{ '' || github.event.number }}",
+  )
+  assert_eq(
+    substitute_inputs_text("${{ format('{0}', inputs.text) }}", {
+      "text": "it's fine",
+    }),
+    "${{ format('{0}', 'it''s fine') }}",
+  )
+}
