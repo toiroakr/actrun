@@ -2785,6 +2785,7 @@ fn lower_local_action(
     )
   }
   composite_steps[job.id + "/" + outer_step_id] = {
+    if_condition: outer_step.if_condition,
     continue_on_error: outer_step.continue_on_error,
     env: merge_env(job_env, outer_step.env),
   }

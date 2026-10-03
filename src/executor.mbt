@@ -4329,6 +4329,7 @@ pub async fn execute_lowered_native(
   let remaining_job_tasks : Map[String, Int] = Map([])
   let mut required_failed = false
   let composite_continue_on_error_values : Map[String, Bool] = Map([])
+  let composite_if_values : Map[String, Bool] = Map([])
 
   for task in selected_tasks {
     match find_task_plan(lowered.plan, task.id) {
@@ -4507,25 +4508,29 @@ pub async fn execute_lowered_native(
             )
             let vars_ctx = runner_vars_context()
             let runner_ctx = runner_context(plan, workspace_root)
-            for
-              outer_step_id in composite_ancestor_step_ids(
-                plan.step_id,
-                step_scope.parent_of,
-              ) {
+            let ancestors = composite_ancestor_step_ids(
+              plan.step_id,
+              step_scope.parent_of,
+            )
+            let mut composites_should_run = true
+            for index = ancestors.length() - 1; index >= 0; index = index - 1 {
+              let outer_step_id = ancestors[index]
               let key = plan.job_id + "/" + outer_step_id
-              guard lowered.plan.composite_steps.get(key) is Some(composite) &&
-                composite_continue_on_error_values.get(key) is None else {
+              guard lowered.plan.composite_steps.get(key) is Some(composite) else {
                 continue
               }
-              let outer_scope = { ..step_scope, step_id: outer_step_id, }
-              let outer_env = merge_runner_env(
-                composite.env,
-                current_state.env_updates,
-              )
-              outer_env["ACTRUN_LOCAL"] = "true"
-              composite_continue_on_error_values[key] = evaluate_boolean_condition(
-                composite.continue_on_error,
-                new_if_condition_context(
+              if !composites_should_run {
+                composite_if_values[key] = false
+                continue
+              }
+              if composite_if_values.get(key) is None {
+                let outer_scope = { ..step_scope, step_id: outer_step_id, }
+                let outer_env = merge_runner_env(
+                  composite.env,
+                  current_state.env_updates,
+                )
+                outer_env["ACTRUN_LOCAL"] = "true"
+                let context = new_if_condition_context(
                   dispatch_inputs~,
                   step_outputs=current_state.step_outputs,
                   step_outcomes=current_state.step_outcomes,
@@ -4550,47 +4555,70 @@ pub async fn execute_lowered_native(
                     current_state,
                     scope=Some(outer_scope),
                   ),
-                ),
-              )
-              record_yaml_coverage(
-                composite.env,
-                "continue-on-error",
-                outcome=composite_continue_on_error_values.get(key),
-              )
+                )
+                composite_if_values[key] = evaluate_if_condition(
+                  composite.if_condition,
+                  context,
+                )
+                record_yaml_coverage(
+                  composite.env,
+                  "if",
+                  outcome=composite_if_values.get(key),
+                )
+                composite_continue_on_error_values[key] = evaluate_boolean_condition(
+                  composite.continue_on_error,
+                  context,
+                )
+                record_yaml_coverage(
+                  composite.env,
+                  "continue-on-error",
+                  outcome=composite_continue_on_error_values.get(key),
+                )
+              }
+              composites_should_run = composite_if_values
+                .get(key)
+                .unwrap_or(false)
             }
-            let step_env = merge_runner_env(plan.env, current_state.env_updates)
-            step_env["ACTRUN_LOCAL"] = "true"
-            let decision = evaluate_if_condition(
-              plan.if_condition,
-              new_if_condition_context(
-                dispatch_inputs~,
-                step_outputs=current_state.step_outputs,
-                step_outcomes=current_state.step_outcomes,
-                step_conclusions=current_state.step_conclusions,
-                workspace_root~,
-                env_context=step_env,
-                job_context=job_ctx,
-                vars_context=vars_ctx,
-                github_context=github_ctx,
-                runner_context=runner_ctx,
-                needs_outputs~,
-                needs_results~,
-                success_value=step_if_success_value(
-                  current_state,
-                  scope=Some(step_scope),
+            if !composites_should_run {
+              false
+            } else {
+              let step_env = merge_runner_env(
+                plan.env,
+                current_state.env_updates,
+              )
+              step_env["ACTRUN_LOCAL"] = "true"
+              let decision = evaluate_if_condition(
+                plan.if_condition,
+                new_if_condition_context(
+                  dispatch_inputs~,
+                  step_outputs=current_state.step_outputs,
+                  step_outcomes=current_state.step_outcomes,
+                  step_conclusions=current_state.step_conclusions,
+                  workspace_root~,
+                  env_context=step_env,
+                  job_context=job_ctx,
+                  vars_context=vars_ctx,
+                  github_context=github_ctx,
+                  runner_context=runner_ctx,
+                  needs_outputs~,
+                  needs_results~,
+                  success_value=step_if_success_value(
+                    current_state,
+                    scope=Some(step_scope),
+                  ),
+                  failure_value=step_if_failure_value(
+                    current_state,
+                    scope=Some(step_scope),
+                  ),
+                  cancelled_value=step_if_cancelled_value(
+                    current_state,
+                    scope=Some(step_scope),
+                  ),
                 ),
-                failure_value=step_if_failure_value(
-                  current_state,
-                  scope=Some(step_scope),
-                ),
-                cancelled_value=step_if_cancelled_value(
-                  current_state,
-                  scope=Some(step_scope),
-                ),
-              ),
-            )
-            record_yaml_coverage(plan.env, "if", outcome=Some(decision))
-            decision
+              )
+              record_yaml_coverage(plan.env, "if", outcome=Some(decision))
+              decision
+            }
           }
           _ => true
         }
@@ -4599,7 +4627,7 @@ pub async fn execute_lowered_native(
             Some(plan) => {
               let message = "step if condition evaluated to false"
               reports.push(task_report_skipped(plan, workspace_root, message))
-              job_states[plan.job_id] = apply_job_runtime_updates(
+              let mut skipped_state = apply_job_runtime_updates(
                 current_state,
                 plan.step_id,
                 Some("skipped"),
@@ -4610,6 +4638,28 @@ pub async fn execute_lowered_native(
                 {},
                 {},
               )
+              let scope = plan_step_scope(lowered.plan, plan)
+              for
+                parent in composite_ancestor_step_ids(
+                  plan.step_id,
+                  scope.parent_of,
+                ) {
+                if composite_if_values.get(plan.job_id + "/" + parent) ==
+                  Some(false) {
+                  skipped_state = apply_job_runtime_updates(
+                    skipped_state,
+                    parent,
+                    Some("skipped"),
+                    Some("skipped"),
+                    None,
+                    {},
+                    [],
+                    {},
+                    {},
+                  )
+                }
+              }
+              job_states[plan.job_id] = skipped_state
               steps.push({
                 id: task.id,
                 status: "skipped",
