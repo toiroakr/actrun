@@ -400,18 +400,26 @@ async fn artifact_select_upload_files(
           },
         ),
       )
-      if @xfs.path_exists(root_abs) {
-        included_roots.push(root_abs)
-      }
-      if runner_temp.length() > 0 &&
-        path.has_prefix("/") &&
+      let boundary = if path.has_prefix("/") &&
+        runner_temp.length() > 0 &&
         validate_workspace_path(runner_temp, root_abs) is Some(_) {
+        runner_temp
+      } else if validate_workspace_path(workspace_root, root_abs) is Some(_) {
+        workspace_root
+      } else {
+        return { root_paths: [], file_paths: [], invalid_path: Some(path), }
+      }
+      if !@xfs.path_exists(root_abs) {
+        continue
+      }
+      included_roots.push(root_abs)
+      if path.has_prefix("/") {
         let files : Array[String] = []
         if !artifact_collect_absolute_files(
             root_abs,
             files,
             include_hidden~,
-            boundary=runner_temp,
+            boundary~,
           ) {
           return { root_paths: [], file_paths: [], invalid_path: Some(path), }
         }

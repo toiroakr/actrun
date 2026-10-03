@@ -6945,3 +6945,57 @@ async test "executor: logical expressions use supplied workflow inputs" {
   )
   assert_eq(expect_task_report(report, "a/value").stdout, "chosen/chosen")
 }
+
+///|
+#cfg(target="native")
+async test "executor: supplied workflow inputs work in job and step conditions" {
+  let workspace = prepare_workspace("executor-input-conditions")
+  let workflow = new_workflow("ci", [
+    new_job(
+      "a",
+      [
+        new_run_step(
+          "value",
+          "printf chosen",
+          if_condition="inputs.enabled == 'yes'",
+        ),
+        new_run_step("skip", "exit 99", if_condition="inputs.missing"),
+      ],
+      if_condition="inputs.enabled == 'yes'",
+    ),
+  ])
+  let lowered = lower_push_workflow(workflow)
+  assert_eq(lowered.errors.length(), 0)
+  let report = execute_lowered_native(lowered, workspace_root=workspace, dispatch_inputs={
+    "enabled": "yes",
+  })
+  assert_eq(expect_task_report(report, "a/value").stdout, "chosen")
+  assert_eq(expect_task_report(report, "a/skip").status, "skipped")
+}
+
+///|
+#cfg(target="native")
+async test "executor: supplied workflow inputs reach env and action arguments" {
+  let workspace = prepare_workspace("executor-input-env-action")
+  @xfs.write_string_to_file(workspace + "/chosen.txt", "artifact")
+  let workflow = new_workflow("ci", [
+    new_job("a", [
+      new_run_step("value", "printf '%s' \"$VALUE\"", env={
+        "VALUE": "${{ inputs.target || 'fallback' }}",
+      }),
+      new_uses_step("upload", "actions/upload-artifact@v4", with_values={
+        "name": "input-artifact",
+        "path": "${{ inputs.target || 'fallback' }}.txt",
+        "if-no-files-found": "error",
+      }),
+    ]),
+  ])
+  let report = execute_lowered_native(
+    lower_push_workflow(workflow),
+    workspace_root=workspace,
+    dispatch_inputs={ "target": "chosen" },
+  )
+  assert_eq(expect_task_report(report, "a/value").stdout, "chosen")
+  assert_eq(expect_task_report(report, "a/upload").stderr, "")
+  assert_eq(expect_task_report(report, "a/upload").status, "success")
+}

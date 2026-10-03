@@ -612,3 +612,28 @@ async test "artifact upload excludes hidden runner temp entries unless enabled" 
   }
   wbtest_cleanup(root)
 }
+
+///|
+async test "artifact upload validates absolute glob roots before selecting workspace files" {
+  let root = wbtest_setup_tmpdir()
+  let workspace = root + "/workspace"
+  let outside = root + "/outside"
+  let _ = wbtest_run("mkdir", [
+    "-p",
+    workspace + outside,
+    outside,
+    workspace + "/reports",
+  ])
+  @xfs.write_string_to_file(workspace + outside + "/decoy.txt", "decoy")
+  @xfs.write_string_to_file(workspace + "/reports/result.txt", "result")
+  let rejected = artifact_select_upload_files(workspace, [outside + "/*.txt"])
+  assert_eq(rejected.file_paths.length(), 0)
+  assert_eq(rejected.root_paths.length(), 0)
+  assert_true(rejected.invalid_path is Some(_))
+  let accepted = artifact_select_upload_files(workspace, [
+    workspace + "/reports/*.txt",
+  ])
+  assert_eq(accepted.file_paths.length(), 1)
+  assert_true(accepted.file_paths[0].has_suffix("/reports/result.txt"))
+  wbtest_cleanup(root)
+}

@@ -641,6 +641,9 @@ fn if_condition_atom_supported(text : String) -> Bool {
   if if_secrets_name(trimmed) is Some(_) {
     return true
   }
+  if dispatch_inputs_expr_name(trimmed) is Some(_) {
+    return true
+  }
   if if_github_name(trimmed) is Some(_) {
     return true
   }

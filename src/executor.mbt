@@ -1615,6 +1615,7 @@ fn resolve_plan_env(
   runner_context : Map[String, String],
   needs_outputs : Map[String, Map[String, String]],
   needs_results : Map[String, String],
+  dispatch_inputs : Map[String, String],
 ) -> Map[String, String] {
   let action_env = action_scope_env(state, plan.action_scope)
   let mut context = merge_runner_env(plan.env, state.env_updates)
@@ -1624,8 +1625,16 @@ fn resolve_plan_env(
     let next : Map[String, String] = Map([])
     for key, value in plan.env {
       next[key] = substitute_runtime_text(
-        value, state, workspace_root, context, job_context, github_context, runner_context,
-        needs_outputs, needs_results,
+        value,
+        state,
+        workspace_root,
+        context,
+        job_context,
+        github_context,
+        runner_context,
+        needs_outputs,
+        needs_results,
+        dispatch_inputs~,
       )
       record_yaml_coverage(plan.env, "env." + key)
     }
@@ -3653,6 +3662,7 @@ async fn execute_action_plan_native(
   job_containers : Map[String, JobContainerSpec],
   job_services : Map[String, Map[String, JobContainerSpec]],
   allow_destructive_checkout_clean : Bool,
+  dispatch_inputs : Map[String, String],
 ) -> TaskExecutionResult {
   guard plan.action is Some(action) else {
     return failure_execution_result(
@@ -3670,7 +3680,7 @@ async fn execute_action_plan_native(
   )
   let resolved_plan_env = resolve_plan_env(
     plan, state, workspace_root, job_ctx, github_ctx, runner_ctx, needs_outputs,
-    needs_results,
+    needs_results, dispatch_inputs,
   )
   let resolved_job_container = match job_containers.get(plan.job_id) {
     Some(container) =>
@@ -3912,7 +3922,7 @@ async fn dump_plan_step_context_json(
   let job_ctx = plan_job_context(execution_plan.job_services, plan.job_id)
   let resolved_env = resolve_plan_env(
     plan, state, workspace_root, job_ctx, github_ctx, runner_ctx, needs_outputs,
-    needs_results,
+    needs_results, dispatch_inputs,
   )
   let resolved_script = substitute_runtime_text(
     plan.script,
@@ -4109,7 +4119,7 @@ async fn execute_task_plan_native(
   if plan.kind == "action" {
     return execute_action_plan_native(
       workflow_name, plan, workspace_root, state, needs_outputs, needs_results, push_event,
-      job_containers, job_services, allow_destructive_checkout_clean,
+      job_containers, job_services, allow_destructive_checkout_clean, dispatch_inputs,
     )
   }
   guard prepare_step_file_commands(plan.id, workspace_root)
@@ -4129,7 +4139,7 @@ async fn execute_task_plan_native(
   )
   let resolved_plan_env = resolve_plan_env(
     plan, state, workspace_root, job_ctx, github_ctx, runner_ctx, needs_outputs,
-    needs_results,
+    needs_results, dispatch_inputs,
   )
   let resolved_script = substitute_runtime_text(
     plan.script,
@@ -4695,7 +4705,7 @@ pub async fn execute_lowered_native(
                   let runner_ctx = runner_context(plan, workspace_root)
                   let resolved_plan_env = resolve_plan_env(
                     plan, current_state, workspace_root, job_ctx, github_ctx, runner_ctx,
-                    needs_outputs, needs_results,
+                    needs_outputs, needs_results, dispatch_inputs,
                   )
                   let service_start = start_job_services_native(
                     plan.job_id,
