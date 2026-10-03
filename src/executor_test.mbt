@@ -6703,3 +6703,362 @@ async test "executor: format() in a condition does not expand placeholders insid
     ),
   )
 }
+
+///|
+#cfg(target="native")
+async test "executor: checkout preserves executable files and a clean git diff" {
+  let workspace = prepare_git_checkout_workspace("checkout-executable-mode")
+  @xfs.write_string_to_file(
+    workspace + "/tool.sh",
+    "#!/bin/sh\nprintf ready\\n\n",
+  )
+  executor_test_require_ok("chmod", "chmod", ["755", "tool.sh"], workspace)
+  executor_test_require_ok("git add", "git", ["add", "tool.sh"], workspace)
+  executor_test_require_ok(
+    "git commit",
+    "git",
+    ["commit", "-qm", "executable fixture"],
+    workspace,
+  )
+  let workflow = new_workflow("ci", [
+    new_job(
+      "build",
+      [
+        new_uses_step("checkout", "actions/checkout@v4", with_values={
+          "path": "repo",
+        }),
+        new_run_step(
+          "verify",
+          "test -x repo/tool.sh && test ! -x repo/tracked.txt && git -C repo diff --exit-code",
+          shell=Some("bash"),
+        ),
+      ],
+      defaults=new_run_defaults(shell=Some("bash")),
+    ),
+  ])
+  let report = execute_lowered_native(
+    lower_push_workflow(workflow),
+    workspace_root=workspace,
+  )
+  @debug.assert_eq(
+    expect_task_report(report, "build/checkout").status,
+    "success",
+  )
+  @debug.assert_eq(expect_task_report(report, "build/verify").status, "success")
+}
+
+///|
+#cfg(target="native")
+async test "executor: YAML coverage distinguishes skipped fields and condition outcomes" {
+  let workspace = prepare_workspace("yaml-coverage")
+  let directory = workspace + "/coverage"
+  ensure_dir(directory)
+  for file in @xfs.read_dir(directory) {
+    @xfs.remove_file(directory + "/" + file)
+  }
+  let previous = executor_test_set_env_var("ACTRUN_COVERAGE_DIR", directory)
+  let workflow = new_workflow("ci", [
+    new_job("a", [
+      new_run_step("first", "true", env={ "ACTRUN_COVERAGE_STEP": "step/a" }),
+      new_run_step("second", "true", env={ "ACTRUN_COVERAGE_STEP": "step?a" }),
+      new_run_step(
+        "yes",
+        "printf '%s' \"$VALUE\"",
+        env={ "ACTRUN_COVERAGE_STEP": "yes", "VALUE": "sensitive-value" },
+        if_condition="true",
+      ),
+      new_run_step(
+        "no",
+        "exit 99",
+        env={ "ACTRUN_COVERAGE_STEP": "no", "VALUE": "sensitive-value" },
+        if_condition="false",
+      ),
+    ]),
+    new_job(
+      "all-skipped-false",
+      [new_uses_step("external", "example/noop@v1")],
+      if_condition="false",
+      env={ "ACTRUN_COVERAGE_JOB": "skipped-false-job" },
+    ),
+    new_job("all-skipped", [new_uses_step("external", "example/noop@v1")], env={
+      "ACTRUN_COVERAGE_JOB": "all-skipped-job",
+    }),
+  ])
+  let report = execute_lowered_native(
+    lower_push_workflow_in_workspace(workflow, workspace, skip_actions=[
+      "example/noop",
+    ]),
+    workspace_root=workspace,
+  )
+  executor_test_restore_env_var("ACTRUN_COVERAGE_DIR", previous)
+  @debug.assert_eq(expect_task_report(report, "a/yes").status, "success")
+  @debug.assert_eq(expect_task_report(report, "a/no").status, "skipped")
+  let records = @xfs.read_dir(directory).map(file => {
+    @xfs.read_file_to_string(directory + "/" + file)
+  })
+  for
+    (source, field, outcome, expected) in [
+      ("skipped-false-job", "if", Json::boolean(false), true),
+      ("all-skipped-job", "if", Json::boolean(true), true),
+      ("yes", "if", Json::boolean(true), true),
+      ("no", "if", Json::boolean(false), true),
+      ("yes", "env.VALUE", Json::null(), true),
+      ("no", "env.VALUE", Json::null(), false),
+      ("no", "run", Json::null(), false),
+    ] {
+    let record : Json = { "source": source, "field": field, "outcome": outcome }
+    assert_eq(records.contains(record.stringify()), expected)
+  }
+  let sources : Array[String] = []
+  for file in @xfs.read_dir(directory) {
+    let record = @json.parse(@xfs.read_file_to_string(directory + "/" + file))
+    if record is Object(fields) &&
+      fields.get("field") == Some(Json::string("run")) {
+      if fields.get("source") is Some(String(source)) {
+        sources.push(source)
+      }
+    }
+  }
+  sources.sort_by(String::lexical_compare)
+  assert_eq(sources, ["step/a", "step?a", "yes"])
+  for file in @xfs.read_dir(directory) {
+    @debug.assert_eq(
+      @xfs.read_file_to_string(directory + "/" + file).contains(
+        "sensitive-value",
+      ),
+      false,
+    )
+  }
+}
+
+///|
+#cfg(target="native")
+async test "executor: composite sibling output references retain their local scope" {
+  let workspace = prepare_workspace("executor-composite-sibling-scope")
+  ensure_dir(workspace + "/action")
+  @xfs.write_string_to_file(
+    workspace + "/action/action.yml",
+    (
+      #|name: Example
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - id: make-value
+      #|      shell: bash
+      #|      run: echo 'value=inner' >> "$GITHUB_OUTPUT"
+      #|    - id: consume
+      #|      if: steps.make-value.outputs.value == 'inner'
+      #|      shell: bash
+      #|      env:
+      #|        VALUE: ${{ steps.make-value.outputs.value }}
+      #|      run: printf '%s/%s' "$VALUE" "${{ format('steps.literal {0}', steps.make-value.outputs.value) }}"
+    ),
+  )
+  let workflow = new_workflow("ci", [
+    new_job("build", [
+      new_run_step("make-value", "echo 'value=outer' >> \"$GITHUB_OUTPUT\""),
+      new_uses_step("example", "./action"),
+    ]),
+  ])
+  let lowered = lower_push_workflow_in_workspace(workflow, workspace)
+  let report = execute_lowered_native(lowered, workspace_root=workspace)
+  assert_eq(
+    expect_task_report(report, "build/example__consume").stdout,
+    "inner/steps.literal inner",
+  )
+}
+
+///|
+#cfg(target="native")
+async test "executor: event payload fields remain available to expressions" {
+  let workspace = prepare_workspace("executor-event-payload-context")
+  let parsed = parse_github_push_event_json(
+    (
+      #|{"ref":"refs/heads/feature","before":"a","after":"b","pull_request":{"number":42,"base":{"ref":"main"},"head":{"ref":"feature","sha":"abc"}}}
+    ),
+  )
+  let event = parsed.event.unwrap()
+  let workflow = new_workflow("ci", [
+    new_job("build", [
+      new_run_step(
+        "show", "printf '%s/%s/%s' '${{ github.event.pull_request.number }}' '${{ github.base_ref }}' '${{ github.event.pull_request.head.sha }}'",
+      ),
+    ]),
+  ])
+  let lowered = lower_push_workflow_in_workspace(workflow, workspace)
+  let report = execute_lowered_native(
+    lowered,
+    workspace_root=workspace,
+    push_event=Some(event),
+  )
+  assert_eq(expect_task_report(report, "build/show").stdout, "42/main/abc")
+}
+
+///|
+#cfg(target="native")
+async test "executor: composite forwards interpolated input to builtin action" {
+  let workspace = prepare_workspace("executor-composite-builtin-input")
+  ensure_dir(workspace + "/action")
+  @xfs.write_string_to_file(workspace + "/artifact.txt", "example")
+  @xfs.write_string_to_file(
+    workspace + "/action/action.yml",
+    (
+      #|name: Example
+      #|inputs:
+      #|  artifact-name:
+      #|    required: true
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - id: produce
+      #|      shell: bash
+      #|      run: |
+      #|        printf example > "$RUNNER_TEMP/artifact.txt"
+      #|        echo "path=$RUNNER_TEMP/artifact.txt" >> "$GITHUB_OUTPUT"
+      #|    - id: upload
+      #|      uses: actions/upload-artifact@v4
+      #|      with:
+      #|        name: ${{ inputs.artifact-name }}
+      #|        path: ${{ steps.produce.outputs.path }}
+      #|        if-no-files-found: error
+    ),
+  )
+  let workflow = new_workflow("ci", [
+    new_job("build", [
+      new_uses_step("example", "./action", with_values={
+        "artifact-name": "bundle-${{ github.run_id }}",
+      }),
+    ]),
+  ])
+  let report = execute_lowered_native(
+    lower_push_workflow_in_workspace(workflow, workspace),
+    workspace_root=workspace,
+  )
+  assert_eq(
+    expect_task_report(report, "build/example__upload").status,
+    "success",
+  )
+}
+
+///|
+#cfg(target="native")
+async test "executor: logical expressions use supplied workflow inputs" {
+  let workspace = prepare_workspace("executor-logical-inputs")
+  let workflow = new_workflow("ci", [
+    new_job("a", [
+      new_run_step(
+        "value", "printf '%s/%s' \"${{ inputs.target || 'default' }}\" \"${{ github.event.inputs.target || 'default' }}\"",
+      ),
+    ]),
+  ])
+  let report = execute_lowered_native(
+    lower_push_workflow(workflow),
+    workspace_root=workspace,
+    dispatch_inputs={ "target": "chosen" },
+  )
+  assert_eq(expect_task_report(report, "a/value").stdout, "chosen/chosen")
+}
+
+///|
+#cfg(target="native")
+async test "executor: supplied workflow inputs work in job and step conditions" {
+  let workspace = prepare_workspace("executor-input-conditions")
+  let workflow = new_workflow("ci", [
+    new_job(
+      "a",
+      [
+        new_run_step(
+          "value",
+          "printf chosen",
+          if_condition="inputs.enabled == 'yes'",
+        ),
+        new_run_step("skip", "exit 99", if_condition="inputs.missing"),
+      ],
+      if_condition="inputs.enabled == 'yes'",
+    ),
+  ])
+  let lowered = lower_push_workflow(workflow)
+  assert_eq(lowered.errors.length(), 0)
+  let report = execute_lowered_native(lowered, workspace_root=workspace, dispatch_inputs={
+    "enabled": "yes",
+  })
+  assert_eq(expect_task_report(report, "a/value").stdout, "chosen")
+  assert_eq(expect_task_report(report, "a/skip").status, "skipped")
+}
+
+///|
+#cfg(target="native")
+async test "executor: supplied workflow inputs reach env and action arguments" {
+  let workspace = prepare_workspace("executor-input-env-action")
+  @xfs.write_string_to_file(workspace + "/chosen.txt", "artifact")
+  let workflow = new_workflow("ci", [
+    new_job("a", [
+      new_run_step("value", "printf '%s' \"$VALUE\"", env={
+        "VALUE": "${{ inputs.target || 'fallback' }}",
+      }),
+      new_uses_step("upload", "actions/upload-artifact@v4", with_values={
+        "name": "input-artifact",
+        "path": "${{ inputs.target || 'fallback' }}.txt",
+        "if-no-files-found": "error",
+      }),
+    ]),
+  ])
+  let report = execute_lowered_native(
+    lower_push_workflow(workflow),
+    workspace_root=workspace,
+    dispatch_inputs={ "target": "chosen" },
+  )
+  assert_eq(expect_task_report(report, "a/value").stdout, "chosen")
+  assert_eq(expect_task_report(report, "a/upload").stderr, "")
+  assert_eq(expect_task_report(report, "a/upload").status, "success")
+}
+
+///|
+#cfg(target="native")
+async test "executor: action defaults evaluate standalone booleans and interpolation sees job status" {
+  let workspace = prepare_workspace("executor-boolean-defaults")
+  ensure_dir(workspace + "/action")
+  @xfs.write_string_to_file(
+    workspace + "/action/action.yml",
+    (
+      #|name: Example
+      #|inputs:
+      #|  comparison:
+      #|    default: ${{ github.event_name == 'push' }}
+      #|  negation:
+      #|    default: ${{ !true }}
+      #|  literal:
+      #|    default: ${{ false }}
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - id: show
+      #|      shell: bash
+      #|      env:
+      #|        COMPARISON: ${{ inputs.comparison }}
+      #|        NEGATION: ${{ inputs.negation }}
+      #|        LITERAL: ${{ inputs.literal }}
+      #|      run: printf '%s/%s/%s' "$COMPARISON" "$NEGATION" "$LITERAL"
+    ),
+  )
+  let workflow = new_workflow("ci", [
+    new_job("a", [new_uses_step("action", "./action")]),
+    new_job("b", [
+      new_run_step("fail", "exit 1"),
+      new_run_step(
+        "status",
+        "printf '%s/%s' '${{ failure() }}' '${{ success() }}'",
+        if_condition="always()",
+      ),
+    ]),
+  ])
+  let report = execute_lowered_native(
+    lower_push_workflow_in_workspace(workflow, workspace),
+    workspace_root=workspace,
+  )
+  assert_eq(
+    expect_task_report(report, "a/action__show").stdout,
+    "true/false/false",
+  )
+  assert_eq(expect_task_report(report, "b/status").stdout, "true/false")
+}

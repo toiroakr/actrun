@@ -1159,6 +1159,30 @@ fn github_repository_owner(push_event : PushEvent?) -> String {
 }
 
 ///|
+fn append_event_context(
+  values : Map[String, String],
+  key : String,
+  value : Json,
+) -> Unit {
+  values[key] = match value {
+    String(text) => text
+    Null => ""
+    _ => value.stringify()
+  }
+  match value {
+    Object(fields) =>
+      for name, child in fields {
+        append_event_context(values, key + "." + name, child)
+      }
+    Array(items) =>
+      for i, child in items {
+        append_event_context(values, key + "." + i.to_string(), child)
+      }
+    _ => ()
+  }
+}
+
+///|
 fn github_context(
   workflow_name : String,
   plan : TaskPlan,
@@ -1166,7 +1190,7 @@ fn github_context(
   push_event : PushEvent?,
   event_name? : String = "push",
 ) -> Map[String, String] {
-  {
+  let values : Map[String, String] = {
     "action": github_action_value(plan),
     "actor": match push_event {
       Some(event) => event.actor
@@ -1202,6 +1226,19 @@ fn github_context(
     "run_id": "",
     "run_number": "",
   }
+  match push_event {
+    Some({ payload: Some(payload), .. }) => {
+      append_event_context(values, "event", payload)
+      values["base_ref"] = values
+        .get("event.pull_request.base.ref")
+        .unwrap_or("")
+      values["head_ref"] = values
+        .get("event.pull_request.head.ref")
+        .unwrap_or("")
+    }
+    _ => ()
+  }
+  values
 }
 
 ///|
@@ -1383,6 +1420,33 @@ fn resolve_expression_value(
   needs_results : Map[String, String],
   dispatch_inputs : Map[String, String],
 ) -> String {
+  let context = new_if_condition_context(
+    dispatch_inputs~,
+    step_outputs=state.step_outputs,
+    step_outcomes=state.step_outcomes,
+    step_conclusions=state.step_conclusions,
+    workspace_root~,
+    env_context~,
+    job_context~,
+    vars_context~,
+    secrets_context~,
+    github_context~,
+    runner_context~,
+    needs_outputs~,
+    needs_results~,
+    success_value=step_if_success_value(state),
+    failure_value=step_if_failure_value(state),
+    cancelled_value=step_if_cancelled_value(state),
+  )
+  if if_condition_supported(expression) {
+    return if_condition_value_to_string(
+      if_condition_atom_value(expression, context),
+    )
+  }
+  match if_logical_expression_value(expression, context) {
+    Some(value) => return if_condition_value_to_string(value)
+    None => ()
+  }
   match step_output_expr_name(expression) {
     Some((step_id, output_name)) =>
       return resolve_step_output(state, step_id, output_name)
@@ -1440,24 +1504,7 @@ fn resolve_expression_value(
       return map_get_case_insensitive(runner_context, name).unwrap_or("")
     None => ()
   }
-  match
-    evaluate_string_function_expression(
-      expression,
-      new_if_condition_context(
-        step_outputs=state.step_outputs,
-        step_outcomes=state.step_outcomes,
-        step_conclusions=state.step_conclusions,
-        workspace_root~,
-        env_context~,
-        job_context~,
-        vars_context~,
-        secrets_context~,
-        github_context~,
-        runner_context~,
-        needs_outputs~,
-        needs_results~,
-      ),
-    ) {
+  match evaluate_string_function_expression(expression, context) {
     Some(value) => return value
     None => ()
   }
@@ -1555,6 +1602,7 @@ fn resolve_plan_env(
   runner_context : Map[String, String],
   needs_outputs : Map[String, Map[String, String]],
   needs_results : Map[String, String],
+  dispatch_inputs : Map[String, String],
 ) -> Map[String, String] {
   let action_env = action_scope_env(state, plan.action_scope)
   let mut context = merge_runner_env(plan.env, state.env_updates)
@@ -1564,9 +1612,20 @@ fn resolve_plan_env(
     let next : Map[String, String] = Map([])
     for key, value in plan.env {
       next[key] = substitute_runtime_text(
-        value, state, workspace_root, context, job_context, github_context, runner_context,
-        needs_outputs, needs_results,
+        value,
+        state,
+        workspace_root,
+        context,
+        job_context,
+        github_context,
+        runner_context,
+        needs_outputs,
+        needs_results,
+        dispatch_inputs~,
       )
+      if pass == 0 {
+        record_yaml_coverage(plan.env, "env." + key)
+      }
     }
     for key, value in state.env_updates {
       next[key] = value
@@ -2668,7 +2727,7 @@ fn exec_clear_dir_contents(path : String) -> Bool {
 }
 
 ///|
-fn exec_copy_dir_contents(src : String, dst : String) -> Bool {
+async fn exec_copy_dir_contents(src : String, dst : String) -> Bool {
   if !exec_clear_dir_contents(dst) {
     return false
   }
@@ -2678,7 +2737,8 @@ fn exec_copy_dir_contents(src : String, dst : String) -> Bool {
     value => value.to_owned()
   }
   for entry in entries {
-    if !exec_copy_tree(src + "/" + entry, dst + "/" + entry) {
+    let (code, _, _) = run_command("cp", ["-pR", src + "/" + entry, dst])
+    if code != 0 {
       return false
     }
   }
@@ -3591,6 +3651,7 @@ async fn execute_action_plan_native(
   job_containers : Map[String, JobContainerSpec],
   job_services : Map[String, Map[String, JobContainerSpec]],
   allow_destructive_checkout_clean : Bool,
+  dispatch_inputs : Map[String, String],
 ) -> TaskExecutionResult {
   guard plan.action is Some(action) else {
     return failure_execution_result(
@@ -3608,7 +3669,7 @@ async fn execute_action_plan_native(
   )
   let resolved_plan_env = resolve_plan_env(
     plan, state, workspace_root, job_ctx, github_ctx, runner_ctx, needs_outputs,
-    needs_results,
+    needs_results, dispatch_inputs,
   )
   let resolved_job_container = match job_containers.get(plan.job_id) {
     Some(container) =>
@@ -3648,7 +3709,12 @@ async fn execute_action_plan_native(
     }
     if action.kind == "upload-artifact" {
       return builtin_task_result(
-        execute_upload_artifact_native(plan, workspace_root, merged_plan_env),
+        execute_upload_artifact_native(
+          plan,
+          workspace_root,
+          merged_plan_env,
+          runner_temp=runner_ctx.get("temp").unwrap_or(""),
+        ),
       )
     }
     if action.kind == "download-artifact" {
@@ -3845,7 +3911,7 @@ async fn dump_plan_step_context_json(
   let job_ctx = plan_job_context(execution_plan.job_services, plan.job_id)
   let resolved_env = resolve_plan_env(
     plan, state, workspace_root, job_ctx, github_ctx, runner_ctx, needs_outputs,
-    needs_results,
+    needs_results, dispatch_inputs,
   )
   let resolved_script = substitute_runtime_text(
     plan.script,
@@ -3877,6 +3943,7 @@ async fn dump_plan_step_context_json(
   let if_result = evaluate_if_condition(
     plan.if_condition,
     new_if_condition_context(
+      dispatch_inputs~,
       step_outputs=state.step_outputs,
       step_outcomes=state.step_outcomes,
       step_conclusions=state.step_conclusions,
@@ -3959,6 +4026,7 @@ pub async fn dump_workflow_context_json(
         evaluate_if_condition(
           job_if,
           new_if_condition_context(
+            dispatch_inputs~,
             step_outputs={},
             step_outcomes={},
             step_conclusions={},
@@ -4040,7 +4108,7 @@ async fn execute_task_plan_native(
   if plan.kind == "action" {
     return execute_action_plan_native(
       workflow_name, plan, workspace_root, state, needs_outputs, needs_results, push_event,
-      job_containers, job_services, allow_destructive_checkout_clean,
+      job_containers, job_services, allow_destructive_checkout_clean, dispatch_inputs,
     )
   }
   guard prepare_step_file_commands(plan.id, workspace_root)
@@ -4060,7 +4128,7 @@ async fn execute_task_plan_native(
   )
   let resolved_plan_env = resolve_plan_env(
     plan, state, workspace_root, job_ctx, github_ctx, runner_ctx, needs_outputs,
-    needs_results,
+    needs_results, dispatch_inputs,
   )
   let resolved_script = substitute_runtime_text(
     plan.script,
@@ -4098,6 +4166,9 @@ async fn execute_task_plan_native(
     needs_results,
     dispatch_inputs~,
   ).unwrap_or(plan.working_directory)
+  record_yaml_coverage(plan.env, "run")
+  record_yaml_coverage(plan.env, "shell")
+  record_yaml_coverage(plan.env, "working-directory")
   let unsupported_command = unsupported_workflow_command(plan, resolved_script)
   guard unsupported_command is None else {
     let command_name = unsupported_command.unwrap_or("")
@@ -4320,6 +4391,7 @@ pub async fn execute_lowered_native(
                 .get(plan.job_id)
                 .unwrap_or("success()"),
                 new_if_condition_context(
+                  dispatch_inputs~,
                   step_outputs=current_state.step_outputs,
                   step_outcomes=current_state.step_outcomes,
                   step_conclusions=current_state.step_conclusions,
@@ -4334,6 +4406,12 @@ pub async fn execute_lowered_native(
                   failure_value=job_if_failure_value(needs_results),
                   cancelled_value=job_if_cancelled_value(needs_results),
                 ),
+              )
+              record_yaml_coverage(
+                plan.env,
+                "if",
+                outcome=Some(value),
+                job=true,
               )
               evaluated_job_conditions[plan.job_id] = value
               value
@@ -4448,6 +4526,7 @@ pub async fn execute_lowered_native(
               composite_continue_on_error_values[key] = evaluate_boolean_condition(
                 composite.continue_on_error,
                 new_if_condition_context(
+                  dispatch_inputs~,
                   step_outputs=current_state.step_outputs,
                   step_outcomes=current_state.step_outcomes,
                   step_conclusions=current_state.step_conclusions,
@@ -4473,12 +4552,18 @@ pub async fn execute_lowered_native(
                   ),
                 ),
               )
+              record_yaml_coverage(
+                composite.env,
+                "continue-on-error",
+                outcome=composite_continue_on_error_values.get(key),
+              )
             }
             let step_env = merge_runner_env(plan.env, current_state.env_updates)
             step_env["ACTRUN_LOCAL"] = "true"
-            evaluate_if_condition(
+            let decision = evaluate_if_condition(
               plan.if_condition,
               new_if_condition_context(
+                dispatch_inputs~,
                 step_outputs=current_state.step_outputs,
                 step_outcomes=current_state.step_outcomes,
                 step_conclusions=current_state.step_conclusions,
@@ -4504,6 +4589,8 @@ pub async fn execute_lowered_native(
                 ),
               ),
             )
+            record_yaml_coverage(plan.env, "if", outcome=Some(decision))
+            decision
           }
           _ => true
         }
@@ -4607,7 +4694,7 @@ pub async fn execute_lowered_native(
                   let runner_ctx = runner_context(plan, workspace_root)
                   let resolved_plan_env = resolve_plan_env(
                     plan, current_state, workspace_root, job_ctx, github_ctx, runner_ctx,
-                    needs_outputs, needs_results,
+                    needs_outputs, needs_results, dispatch_inputs,
                   )
                   let service_start = start_job_services_native(
                     plan.job_id,
@@ -4686,6 +4773,7 @@ pub async fn execute_lowered_native(
               )
               let step_scope = plan_step_scope(lowered.plan, plan)
               let condition_context = new_if_condition_context(
+                dispatch_inputs~,
                 step_outputs=current_state.step_outputs,
                 step_outcomes=current_state.step_outcomes,
                 step_conclusions=current_state.step_conclusions,
@@ -4718,6 +4806,13 @@ pub async fn execute_lowered_native(
                   plan.continue_on_error,
                   condition_context,
                 )
+              if plan.kind != "barrier" {
+                record_yaml_coverage(
+                  plan.env,
+                  "continue-on-error",
+                  outcome=Some(continue_on_error),
+                )
+              }
               let composite_absorbs_failure = fn(outer_step_id : String) {
                 composite_continue_on_error_values
                 .get(plan.job_id + "/" + outer_step_id)
