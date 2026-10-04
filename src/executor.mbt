@@ -4525,6 +4525,20 @@ pub async fn execute_lowered_native(
               }
               if composite_if_values.get(key) is None {
                 let outer_scope = { ..step_scope, step_id: outer_step_id, }
+                let outer_plan = {
+                  ..plan,
+                  kind: "composite",
+                  step_id: outer_step_id,
+                  env: composite.env,
+                  action: None,
+                }
+                let outer_github_ctx = github_context(
+                  ir.name,
+                  outer_plan,
+                  workspace_root,
+                  push_event,
+                  event_name~,
+                )
                 let outer_env = merge_runner_env(
                   composite.env,
                   current_state.env_updates,
@@ -4539,7 +4553,7 @@ pub async fn execute_lowered_native(
                   env_context=outer_env,
                   job_context=job_ctx,
                   vars_context=vars_ctx,
-                  github_context=github_ctx,
+                  github_context=outer_github_ctx,
                   runner_context=runner_ctx,
                   needs_outputs~,
                   needs_results~,
@@ -4565,15 +4579,17 @@ pub async fn execute_lowered_native(
                   "if",
                   outcome=composite_if_values.get(key),
                 )
-                composite_continue_on_error_values[key] = evaluate_boolean_condition(
-                  composite.continue_on_error,
-                  context,
-                )
-                record_yaml_coverage(
-                  composite.env,
-                  "continue-on-error",
-                  outcome=composite_continue_on_error_values.get(key),
-                )
+                if composite_if_values.get(key) == Some(true) {
+                  composite_continue_on_error_values[key] = evaluate_boolean_condition(
+                    composite.continue_on_error,
+                    context,
+                  )
+                  record_yaml_coverage(
+                    composite.env,
+                    "continue-on-error",
+                    outcome=composite_continue_on_error_values.get(key),
+                  )
+                }
               }
               composites_should_run = composite_if_values
                 .get(key)

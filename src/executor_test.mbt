@@ -6853,6 +6853,7 @@ async test "executor: YAML coverage distinguishes skipped fields and condition o
       ("skipped-false-job", "if", Json::boolean(false), true),
       ("all-skipped-job", "if", Json::boolean(true), true),
       ("composite-call", "if", Json::boolean(false), true),
+      ("composite-call", "continue-on-error", Json::boolean(false), false),
       ("excluded-call", "if", Json::boolean(false), true),
       ("excluded-call", "run", Json::null(), false),
       ("yes", "if", Json::boolean(true), true),
@@ -7309,5 +7310,58 @@ async test "executor: composite calls retain outcomes when all children are excl
     workspace_root=workspace,
   )
   assert_eq(expect_task_report(report, "a/after").stdout, "skipped/success\n")
+  assert_true(report.ok)
+}
+
+///|
+#cfg(target="native")
+async test "executor: composite conditions use the call action context" {
+  let workspace = prepare_workspace("executor-composite-call-context")
+  ensure_dir(workspace + "/outer")
+  ensure_dir(workspace + "/inner")
+  @xfs.write_string_to_file(
+    workspace + "/outer/action.yml",
+    (
+      #|name: Outer
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - id: nested
+      #|      if: github.action == 'nested'
+      #|      uses: $/inner
+    ),
+  )
+  @xfs.write_string_to_file(
+    workspace + "/inner/action.yml",
+    (
+      #|name: Inner
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - id: child
+      #|      if: github.action == 'child'
+      #|      shell: bash
+      #|      run: echo ran
+    ),
+  )
+  let report = execute_lowered_native(
+    lower_push_workflow_in_workspace(
+      new_workflow("ci", [
+        new_job("a", [
+          new_uses_step(
+            "outer",
+            "./outer",
+            if_condition="github.action == 'outer'",
+          ),
+        ]),
+      ]),
+      workspace,
+    ),
+    workspace_root=workspace,
+  )
+  assert_eq(
+    expect_task_report(report, "a/outer__nested__child").stdout,
+    "ran\n",
+  )
   assert_true(report.ok)
 }
