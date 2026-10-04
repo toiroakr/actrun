@@ -6756,9 +6756,57 @@ async test "executor: YAML coverage distinguishes skipped fields and condition o
   for file in @xfs.read_dir(directory) {
     @xfs.remove_file(directory + "/" + file)
   }
+  ensure_dir(workspace + "/outer")
+  ensure_dir(workspace + "/inner")
+  @xfs.write_string_to_file(
+    workspace + "/outer/action.yml",
+    (
+      #|name: Outer
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - id: nested
+      #|      if: always()
+      #|      uses: $/inner
+      #|      env:
+      #|        ACTRUN_COVERAGE_STEP: nested-call
+    ),
+  )
+  @xfs.write_string_to_file(
+    workspace + "/inner/action.yml",
+    (
+      #|name: Inner
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - id: child
+      #|      if: always()
+      #|      shell: bash
+      #|      run: exit 99
+      #|      env:
+      #|        ACTRUN_COVERAGE_STEP: skipped-child
+    ),
+  )
+  ensure_dir(workspace + "/excluded")
+  @xfs.write_string_to_file(
+    workspace + "/excluded/action.yml",
+    (
+      #|name: Excluded
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - uses: example/noop@v1
+    ),
+  )
   let previous = executor_test_set_env_var("ACTRUN_COVERAGE_DIR", directory)
   let workflow = new_workflow("ci", [
     new_job("a", [
+      new_uses_step("excluded", "./excluded", if_condition="false", env={
+        "ACTRUN_COVERAGE_STEP": "excluded-call",
+      }),
+      new_uses_step("composite", "./outer", if_condition="false", env={
+        "ACTRUN_COVERAGE_STEP": "composite-call",
+      }),
       new_run_step("first", "true", env={ "ACTRUN_COVERAGE_STEP": "step/a" }),
       new_run_step("second", "true", env={ "ACTRUN_COVERAGE_STEP": "step?a" }),
       new_run_step(
@@ -6791,6 +6839,10 @@ async test "executor: YAML coverage distinguishes skipped fields and condition o
     workspace_root=workspace,
   )
   executor_test_restore_env_var("ACTRUN_COVERAGE_DIR", previous)
+  @debug.assert_eq(
+    expect_task_report(report, "a/composite__nested__child").status,
+    "skipped",
+  )
   @debug.assert_eq(expect_task_report(report, "a/yes").status, "success")
   @debug.assert_eq(expect_task_report(report, "a/no").status, "skipped")
   let records = @xfs.read_dir(directory).map(file => {
@@ -6800,6 +6852,9 @@ async test "executor: YAML coverage distinguishes skipped fields and condition o
     (source, field, outcome, expected) in [
       ("skipped-false-job", "if", Json::boolean(false), true),
       ("all-skipped-job", "if", Json::boolean(true), true),
+      ("composite-call", "if", Json::boolean(false), true),
+      ("excluded-call", "if", Json::boolean(false), true),
+      ("excluded-call", "run", Json::null(), false),
       ("yes", "if", Json::boolean(true), true),
       ("no", "if", Json::boolean(false), true),
       ("yes", "env.VALUE", Json::null(), true),
@@ -6812,6 +6867,10 @@ async test "executor: YAML coverage distinguishes skipped fields and condition o
   let sources : Array[String] = []
   for file in @xfs.read_dir(directory) {
     let record = @json.parse(@xfs.read_file_to_string(directory + "/" + file))
+    if record is Object(fields) {
+      assert_true(fields.get("source") != Some(Json::string("nested-call")))
+      assert_true(fields.get("source") != Some(Json::string("skipped-child")))
+    }
     if record is Object(fields) &&
       fields.get("field") == Some(Json::string("run")) {
       if fields.get("source") is Some(String(source)) {
@@ -7206,5 +7265,49 @@ async test "executor: a composite call condition is not reevaluated after inner 
     workspace_root=workspace,
   )
   assert_eq(expect_task_report(report, "a/action__echo").stdout, "ran\n")
+  assert_true(report.ok)
+}
+
+///|
+#cfg(target="native")
+async test "executor: composite calls retain outcomes when all children are excluded" {
+  let workspace = prepare_workspace("executor-composite-excluded-children")
+  ensure_dir(workspace + "/action")
+  @xfs.write_string_to_file(
+    workspace + "/action/action.yml",
+    (
+      #|name: Example
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - uses: example/noop@v1
+    ),
+  )
+  let report = execute_lowered_native(
+    lower_push_workflow_in_workspace(
+      new_workflow("ci", [
+        new_job(
+          "a",
+          [
+            new_run_step("prepare", "echo 'ENABLED=false' >> \"$GITHUB_ENV\""),
+            new_uses_step(
+              "no",
+              "./action",
+              if_condition="env.ENABLED == 'true'",
+            ),
+            new_uses_step("yes", "./action", if_condition="true"),
+            new_run_step(
+              "after", "echo '${{ steps.no.outcome }}/${{ steps.yes.outcome }}'",
+            ),
+          ],
+          env={ "ENABLED": "true" },
+        ),
+      ]),
+      workspace,
+      skip_actions=["example/noop"],
+    ),
+    workspace_root=workspace,
+  )
+  assert_eq(expect_task_report(report, "a/after").stdout, "skipped/success\n")
   assert_true(report.ok)
 }

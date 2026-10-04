@@ -4096,7 +4096,7 @@ async fn execute_task_plan_native(
   sandbox_config? : SandboxMode = SandboxNone,
   allow_destructive_checkout_clean? : Bool = false,
 ) -> TaskExecutionResult {
-  if plan.kind == "barrier" {
+  if plan.kind == "barrier" || plan.kind == "composite" {
     return {
       report: task_report_success(plan, workspace_root),
       env_updates: {},

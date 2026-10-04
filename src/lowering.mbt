@@ -3054,6 +3054,36 @@ fn lower_local_action(
     local_previous_task_id = task_id
     inner_index += 1
   }
+  if local_previous_task_id == previous_task_id {
+    let task_id = step_task_id(job.id, outer_step_id)
+    tasks.push(
+      @wf.new_task(
+        task_id,
+        job.id,
+        "__actrun_composite__",
+        task_needs(job, previous_task_id),
+        env=outer_env,
+      ),
+    )
+    task_plans.push(
+      new_task_plan(
+        task_id,
+        "composite",
+        job.id,
+        outer_step_id,
+        outer_name,
+        "",
+        "",
+        "",
+        outer_step.if_condition,
+        job.runs_on,
+        outer_env,
+        continue_on_error=outer_step.continue_on_error,
+        action_scope=Some(action_scope),
+      ),
+    )
+    local_previous_task_id = task_id
+  }
   // Register composite action output mappings
   // outputs map: output_name → expression (e.g., "${{ steps.write.outputs.value }}")
   // We resolve inner step references relative to the outer step scope
