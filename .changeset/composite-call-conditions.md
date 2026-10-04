@@ -8,4 +8,4 @@ Retain call conditions and outcomes when all child actions are excluded with `--
 
 Evaluate call conditions with the composite call's GitHub context and omit unreachable `continue-on-error` coverage for skipped calls.
 
-Preserve remote action repository/ref metadata for call conditions, and mark running enclosing composites successful when their only nested call is skipped.
+Preserve action directory and remote repository/ref metadata for call conditions, and mark running enclosing composites successful when their only nested call is skipped.

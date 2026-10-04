@@ -2784,9 +2784,11 @@ fn lower_local_action(
       skipped_steps~,
     )
   }
+  let action_path_root = normalize_local_action_path(action_path)
+  let action_root = join_path(workspace_root, action_path_root)
   let outer_env = merge_env(
     merge_env(job_env, outer_step.env),
-    action_context_env,
+    merge_env(action_context_env, { "GITHUB_ACTION_PATH": action_root }),
   )
   composite_steps[job.id + "/" + outer_step_id] = {
     if_condition: outer_step.if_condition,
@@ -2802,8 +2804,6 @@ fn lower_local_action(
 
   let mut local_previous_task_id = previous_task_id
   let resolved_inputs = merge_env(action.inputs, outer_step.with_values)
-  let action_path_root = normalize_local_action_path(action_path)
-  let action_root = join_path(workspace_root, action_path_root)
   let action_scope = step_task_id(job.id, outer_step_id)
   let outer_name = step_name(outer_step, outer_step_id)
   let mut inner_index = 0

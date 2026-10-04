@@ -7327,7 +7327,7 @@ async test "executor: composite conditions use the call action context" {
       #|  using: composite
       #|  steps:
       #|    - id: nested
-      #|      if: github.action == 'nested'
+      #|      if: github.action == 'nested' && endsWith(github.action_path, '/inner')
       #|      uses: $/inner
     ),
   )
@@ -7351,7 +7351,7 @@ async test "executor: composite conditions use the call action context" {
           new_uses_step(
             "outer",
             "./outer",
-            if_condition="github.action == 'outer'",
+            if_condition="github.action == 'outer' && endsWith(github.action_path, '/outer')",
           ),
         ]),
       ]),
