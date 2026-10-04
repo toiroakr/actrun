@@ -23,12 +23,14 @@ jobs:
 
 記録対象:
 
-- stepとjobの `if` の最終判定
+- step、composite呼び出し、jobの `if` の最終判定
 - stepおよびcomposite呼び出しの `continue-on-error` の最終判定
 - stepの `env.<変数名>` の解決
 - run stepの `run`、`shell`、`working-directory` の解決
 
 識別子・フィールド名・条件の真偽だけを保存する。解決した値、環境変数の値、スクリプト内容、secretの値は保存しない。
+
+composite呼び出しの `if` は子stepの実行前に一度だけ評価する。falseの場合は `always()` を持つ子孫も実行せず、子孫の条件判定と呼び出し自身の `continue-on-error` は記録しない。
 
 この記録はフィールドへの到達を表し、expression内部の各演算子や短絡評価の網羅を表すものではない。`if` の結果には暗黙の `success()` も含まれる。`with`・outputsなどのすべてのYAMLフィールドに対応した仕組みではない。また、シェル内の行実行は別途計測する必要がある。
 

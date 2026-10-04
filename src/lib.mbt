@@ -640,6 +640,7 @@ pub fn new_task_plan(
 
 ///|
 pub struct CompositeStepPlan {
+  if_condition : String
   continue_on_error : String
   env : Map[String, String]
 }

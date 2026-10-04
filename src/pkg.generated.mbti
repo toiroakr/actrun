@@ -215,6 +215,7 @@ pub struct BitWorkspaceResult {
 }
 
 pub struct CompositeStepPlan {
+  if_condition : String
   continue_on_error : String
   env : Map[String, String]
 }

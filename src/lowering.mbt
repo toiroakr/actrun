@@ -2784,9 +2784,16 @@ fn lower_local_action(
       skipped_steps~,
     )
   }
+  let action_path_root = normalize_local_action_path(action_path)
+  let action_root = join_path(workspace_root, action_path_root)
+  let outer_env = merge_env(
+    merge_env(job_env, outer_step.env),
+    merge_env(action_context_env, { "GITHUB_ACTION_PATH": action_root }),
+  )
   composite_steps[job.id + "/" + outer_step_id] = {
+    if_condition: outer_step.if_condition,
     continue_on_error: outer_step.continue_on_error,
-    env: merge_env(job_env, outer_step.env),
+    env: outer_env,
   }
   let action = new_local_action(
     action_manifest.steps,
@@ -2797,10 +2804,7 @@ fn lower_local_action(
 
   let mut local_previous_task_id = previous_task_id
   let resolved_inputs = merge_env(action.inputs, outer_step.with_values)
-  let action_path_root = normalize_local_action_path(action_path)
-  let action_root = join_path(workspace_root, action_path_root)
   let action_scope = step_task_id(job.id, outer_step_id)
-  let outer_env = merge_env(job_env, outer_step.env)
   let outer_name = step_name(outer_step, outer_step_id)
   let mut inner_index = 0
   while inner_index < action.steps.length() {
@@ -3052,6 +3056,36 @@ fn lower_local_action(
     )
     local_previous_task_id = task_id
     inner_index += 1
+  }
+  if local_previous_task_id == previous_task_id {
+    let task_id = step_task_id(job.id, outer_step_id)
+    tasks.push(
+      @wf.new_task(
+        task_id,
+        job.id,
+        "__actrun_composite__",
+        task_needs(job, previous_task_id),
+        env=outer_env,
+      ),
+    )
+    task_plans.push(
+      new_task_plan(
+        task_id,
+        "composite",
+        job.id,
+        outer_step_id,
+        outer_name,
+        "",
+        "",
+        "",
+        outer_step.if_condition,
+        job.runs_on,
+        outer_env,
+        continue_on_error=outer_step.continue_on_error,
+        action_scope=Some(action_scope),
+      ),
+    )
+    local_previous_task_id = task_id
   }
   // Register composite action output mappings
   // outputs map: output_name → expression (e.g., "${{ steps.write.outputs.value }}")
