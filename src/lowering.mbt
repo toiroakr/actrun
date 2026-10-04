@@ -2784,10 +2784,14 @@ fn lower_local_action(
       skipped_steps~,
     )
   }
+  let outer_env = merge_env(
+    merge_env(job_env, outer_step.env),
+    action_context_env,
+  )
   composite_steps[job.id + "/" + outer_step_id] = {
     if_condition: outer_step.if_condition,
     continue_on_error: outer_step.continue_on_error,
-    env: merge_env(job_env, outer_step.env),
+    env: outer_env,
   }
   let action = new_local_action(
     action_manifest.steps,
@@ -2801,7 +2805,6 @@ fn lower_local_action(
   let action_path_root = normalize_local_action_path(action_path)
   let action_root = join_path(workspace_root, action_path_root)
   let action_scope = step_task_id(job.id, outer_step_id)
-  let outer_env = merge_env(job_env, outer_step.env)
   let outer_name = step_name(outer_step, outer_step_id)
   let mut inner_index = 0
   while inner_index < action.steps.length() {

@@ -7365,3 +7365,88 @@ async test "executor: composite conditions use the call action context" {
   )
   assert_true(report.ok)
 }
+
+///|
+#cfg(target="native")
+async test "executor: an enclosing composite succeeds when its only nested call is skipped" {
+  let workspace = prepare_workspace("executor-composite-skipped-only-child")
+  ensure_dir(workspace + "/outer")
+  ensure_dir(workspace + "/inner")
+  @xfs.write_string_to_file(
+    workspace + "/outer/action.yml",
+    (
+      #|name: Outer
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - id: nested
+      #|      if: false
+      #|      uses: $/inner
+    ),
+  )
+  @xfs.write_string_to_file(
+    workspace + "/inner/action.yml",
+    (
+      #|name: Inner
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - run: exit 99
+      #|      shell: bash
+    ),
+  )
+  let report = execute_lowered_native(
+    lower_push_workflow_in_workspace(
+      new_workflow("ci", [
+        new_job("a", [
+          new_uses_step("outer", "./outer"),
+          new_run_step(
+            "after", "echo '${{ steps.outer.outcome }}/${{ steps.outer.conclusion }}'",
+          ),
+        ]),
+      ]),
+      workspace,
+    ),
+    workspace_root=workspace,
+  )
+  assert_eq(expect_task_report(report, "a/after").stdout, "success/success\n")
+  assert_true(report.ok)
+}
+
+///|
+#cfg(target="native")
+async test "executor: remote composite conditions retain repository context" {
+  let workspace = prepare_workspace("executor-composite-remote-condition")
+  let action_root = prepare_cached_github_action_root_for_executor(
+    "example", "conditional-action", "v1",
+  )
+  @xfs.write_string_to_file(
+    action_root + "/action.yml",
+    (
+      #|name: Remote
+      #|runs:
+      #|  using: composite
+      #|  steps:
+      #|    - id: child
+      #|      shell: bash
+      #|      run: echo ran
+    ),
+  )
+  let report = execute_lowered_native(
+    lower_push_workflow_in_workspace(
+      new_workflow("ci", [
+        new_job("a", [
+          new_uses_step(
+            "remote",
+            "example/conditional-action@v1",
+            if_condition="github.action_repository == 'example/conditional-action' && github.action_ref == 'v1'",
+          ),
+        ]),
+      ]),
+      workspace,
+    ),
+    workspace_root=workspace,
+  )
+  assert_eq(expect_task_report(report, "a/remote__child").stdout, "ran\n")
+  assert_true(report.ok)
+}

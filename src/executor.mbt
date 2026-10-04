@@ -4660,13 +4660,24 @@ pub async fn execute_lowered_native(
                   plan.step_id,
                   scope.parent_of,
                 ) {
-                if composite_if_values.get(plan.job_id + "/" + parent) ==
-                  Some(false) {
+                let parent_condition = composite_if_values.get(
+                  plan.job_id + "/" + parent,
+                )
+                if parent_condition == Some(false) ||
+                  (
+                    parent_condition == Some(true) &&
+                    skipped_state.step_outcomes.get(parent) is None
+                  ) {
+                  let outcome = if parent_condition == Some(false) {
+                    "skipped"
+                  } else {
+                    "success"
+                  }
                   skipped_state = apply_job_runtime_updates(
                     skipped_state,
                     parent,
-                    Some("skipped"),
-                    Some("skipped"),
+                    Some(outcome),
+                    Some(outcome),
                     None,
                     {},
                     [],
