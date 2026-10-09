@@ -71,6 +71,8 @@
 - `custom-registry-node-action`: manifest-backed custom registry `node20` action を `ACTRUN_ACTION_REGISTRY_ROOT` 配下から解決して実行する
 - `wasm-action-basic`: `wasm://...` action が file-based Wasm module と fake runner 経由で実行される
 - `remote-composite-fetch`: GitHub repo action prefetch + remote composite action
+- `remote-composite-dry-run`: `--dry-run` が未 cache の remote composite action を fetch して計画に展開し、step は実行しない
+- `remote-composite-dry-run-offline`: fetch が失敗しても `--dry-run` は警告つきで計画を出力して正常終了する
 - `remote-composite-nested-prefetch`: remote composite action が nested remote action を再帰 prefetch する
 - `remote-composite-nested-cache-hit`: nested remote action が cache 済みなら fetch なしで解決される
 - `remote-composite-cache-hit`: cache 済み GitHub repo composite action が fetch なしで解決される

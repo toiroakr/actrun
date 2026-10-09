@@ -306,7 +306,7 @@ actrun cache prune --key <key>                         # Delete cache entry
 
 | Flag | Description |
 |------|-------------|
-| `--dry-run` | Show execution plan without running |
+| `--dry-run` | Show execution plan without running (fetches remote actions so composite actions are expanded) |
 | `--skip-action <pattern>` | Skip actions matching pattern (repeatable) |
 | `--workspace-mode <mode>` | `worktree` (default), `local`, `tmp`, `docker` |
 | `--repo <path>` | Run from a git repository |
@@ -412,6 +412,7 @@ ACTRUN_CONTAINER_RUNTIME=podman actrun workflow run ci.yml
 - GitHub repo `node` actions with `pre`/`main`/`post` lifecycle
 - GitHub repo `docker` actions with `pre-entrypoint`/`entrypoint`/`post-entrypoint` lifecycle
 - Composite actions (local and remote)
+- `--dry-run` fetches remote actions into the cache too, so a remote composite action is expanded in the plan. A failed fetch (for example offline) is reported as a warning and the plan is still printed
 - `docker://image` direct execution
 
 ### Self-Hosted WASM Optimization

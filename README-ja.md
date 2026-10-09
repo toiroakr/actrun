@@ -124,7 +124,7 @@ actrun cache prune --key <key>                         # キャッシュ削除
 
 | フラグ | 説明 |
 |--------|------|
-| `--dry-run` | 実行計画を表示して終了 |
+| `--dry-run` | 実行計画を表示して終了（リモート action を取得し、composite action を計画に展開する） |
 | `--skip-action <pattern>` | パターンに一致する action をスキップ（繰り返し可） |
 | `--workspace-mode <mode>` | `local`（デフォルト）, `worktree`, `tmp`, `docker` |
 | `--repo <path>` | git リポジトリから実行 |
@@ -162,6 +162,7 @@ actrun cache prune --key <key>                         # キャッシュ削除
 - GitHub リポジトリの `node` action（`pre`/`main`/`post` ライフサイクル）
 - GitHub リポジトリの `docker` action（`pre-entrypoint`/`entrypoint`/`post-entrypoint` ライフサイクル）
 - Composite action（ローカル・リモート）
+- `--dry-run` でもリモート action をキャッシュへ取得し、リモート composite action を計画に展開する。取得に失敗した場合（オフラインなど）は警告として報告し、計画は出力する
 - `docker://image` 直接実行
 - `wasm://name@version` モジュール実行
 

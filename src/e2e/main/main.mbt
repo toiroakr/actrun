@@ -3530,6 +3530,94 @@ async fn run_remote_composite_fetch() -> Unit {
 
 ///|
 #cfg(target="native")
+async fn run_remote_composite_dry_run() -> Unit {
+  let scenario = "remote-composite-dry-run"
+  let workspace = e2e_prepare_copied_dir(
+    "_build/e2e/workspaces",
+    scenario,
+    e2e_fixture_dir(scenario),
+  )
+  let log_path = e2e_join_path(workspace, "git.log")
+  let action_src =
+    #|name: remote composite
+    #|inputs:
+    #|  message:
+    #|    default: remote-default
+    #|runs:
+    #|  using: composite
+    #|  steps:
+    #|    - id: write
+    #|      shell: bash
+    #|      run: printf '%s' "${{ inputs.message }}" > remote.txt
+  let fake_git = e2e_prepare_fake_git_bin(workspace, action_src, log_path)
+  let env : Map[String, String] = {
+    "ACTRUN_GIT_BIN": fake_git,
+    "ACTRUN_GITHUB_ACTION_CACHE_ROOT": e2e_join_path(
+      workspace, "github_actions_cache",
+    ),
+  }
+  let result = e2e_run_cli(
+    [
+      e2e_join_path(workspace, "workflow.yml"),
+      "--event",
+      e2e_join_path(workspace, "event.json"),
+      "--dry-run",
+    ],
+    env~,
+  )
+  e2e_expect_ok(result, scenario)
+  e2e_expect_contains(result.stdout, "mode=dry-run", scenario)
+  e2e_expect_not_contains(result.stdout, "is not supported in MVP", scenario)
+  e2e_expect_contains(result.stdout, "build/remote__write", scenario)
+  e2e_expect_missing(e2e_join_path(workspace, "remote.txt"), scenario)
+  let git_log = e2e_read_text(log_path)
+  e2e_expect_contains(
+    git_log,
+    "https://github.com/demo/tools",
+    scenario + " git url",
+  )
+}
+
+///|
+#cfg(target="native")
+async fn run_remote_composite_dry_run_offline() -> Unit {
+  let scenario = "remote-composite-dry-run-offline"
+  let workspace = e2e_prepare_copied_dir(
+    "_build/e2e/workspaces",
+    scenario,
+    e2e_fixture_dir("remote-composite-dry-run"),
+  )
+  let bin_dir = e2e_join_path(workspace, "bin")
+  e2e_ensure_dir(bin_dir)
+  let failing_git = e2e_join_path(bin_dir, "git")
+  @xfs.write_string_to_file(
+    failing_git, "#!/bin/sh\necho 'fatal: unable to access remote' >&2\nexit 128\n",
+  )
+  e2e_make_executable(failing_git)
+  let env : Map[String, String] = {
+    "ACTRUN_GIT_BIN": e2e_absolute_path(failing_git),
+    "ACTRUN_GITHUB_ACTION_CACHE_ROOT": e2e_join_path(
+      workspace, "github_actions_cache",
+    ),
+  }
+  let result = e2e_run_cli(
+    [
+      e2e_join_path(workspace, "workflow.yml"),
+      "--event",
+      e2e_join_path(workspace, "event.json"),
+      "--dry-run",
+    ],
+    env~,
+  )
+  e2e_expect_ok(result, scenario)
+  e2e_expect_contains(result.stdout, "mode=dry-run", scenario)
+  e2e_expect_contains(result.stdout, "warning:", scenario)
+  e2e_expect_contains(result.stdout, "demo/tools", scenario)
+  e2e_expect_contains(result.stdout, "build/verify", scenario)
+}
+
+///|
+#cfg(target="native")
 async fn run_remote_composite_nested_prefetch() -> Unit {
   let scenario = "remote-composite-nested-prefetch"
   let workspace = e2e_prepare_copied_dir(
@@ -5574,6 +5662,14 @@ async fn main {
   println("e2e: remote-composite-fetch")
   run_remote_composite_fetch()
   println("e2e: remote-composite-fetch ok")
+
+  println("e2e: remote-composite-dry-run")
+  run_remote_composite_dry_run()
+  println("e2e: remote-composite-dry-run ok")
+
+  println("e2e: remote-composite-dry-run-offline")
+  run_remote_composite_dry_run_offline()
+  println("e2e: remote-composite-dry-run-offline ok")
 
   println("e2e: remote-composite-nested-prefetch")
   run_remote_composite_nested_prefetch()

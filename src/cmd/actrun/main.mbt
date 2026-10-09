@@ -272,7 +272,7 @@ fn usage_text() -> String {
   "  --after <sha>                After commit SHA\n" +
   "  --changed <path>             Changed file path (repeatable)\n" +
   "  --skip-action <pattern>      Skip actions matching pattern, also inside composite actions and reusable workflows (repeatable)\n" +
-  "  --dry-run                    Show execution plan without running\n" +
+  "  --dry-run                    Show execution plan without running (fetches remote actions)\n" +
   "  --local                      Shorthand for --workspace-mode local\n" +
   "  --worktree                   Shorthand for --workspace-mode worktree\n" +
   "  --tmp                        Shorthand for --workspace-mode tmp\n" +
@@ -8228,11 +8228,20 @@ async fn run_workflow_in_execution_root(
     if options.include_dirty {
       println("include_dirty: true (uncommitted changes will be synced)")
     }
+    // A fetch failure is only a warning: failing here would break offline dry runs.
+    let prefetch = @ar.prefetch_workflow_github_actions_native(
+      filtered_workflow,
+      execution_root,
+      skip_actions=options.skip_actions,
+    )
     let lowered = @ar.lower_push_workflow_in_workspace(
       filtered_workflow,
       execution_root,
       skip_actions=options.skip_actions,
     )
+    for err in prefetch.errors {
+      lowered.errors.push(err)
+    }
     let flow_cache = prepare_flow_cache_plan(lowered, options)
     let cli_args = @ar.cli_args()
     let json_mode = cli_args.contains("--json")

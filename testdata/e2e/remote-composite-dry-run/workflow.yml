@@ -1,0 +1,12 @@
+name: e2e-remote-dry-run
+'on': push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - id: remote
+        uses: demo/tools/composite@v1
+        with:
+          message: remote-hello
+      - id: verify
+        run: cat remote.txt
