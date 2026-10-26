@@ -14,10 +14,15 @@ runs:
   steps:
     - name: Install MoonBit CLI
       shell: bash
+      env:
+        MOON_VERSION: ${{ inputs.version }}
       run: |
-        if [ -n "${{ inputs.version }}" ]; then
-          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash -s -- "${{ inputs.version }}"
+        if [ -n "$MOON_VERSION" ]; then
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash -s -- "$MOON_VERSION"
         else
           curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
         fi
-        echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+    # karinto: ignore[github-env] the installed CLI must be on PATH; this directory is fixed under the runner HOME
+    - name: Add MoonBit CLI to PATH
+      shell: bash
+      run: echo "$HOME/.moon/bin" >> "$GITHUB_PATH"

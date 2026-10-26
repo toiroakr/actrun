@@ -21,7 +21,7 @@ jobs:
       id-token: write
     steps:
       - name: Checkout
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5 # karinto: ignore[checkout-persist-credentials-false,artipacked] changesets pushes release commits with checkout credentials
       - name: Install MoonBit CLI
         uses: ./.github/actions/setup-moonbit
       - name: Setup pnpm
