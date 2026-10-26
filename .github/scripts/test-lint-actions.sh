@@ -34,6 +34,7 @@ printf 'PASS: fork workflow and setup action definitions\n'
 for response in \
   '{"ok":true,"result":{"diagnostics":[{"severity":"error"}]}}' \
   '{"ok":true,"result":{"diagnostics":[],"parse_error":"invalid"}}' \
+  '{"ok":true,"result":{"diagnostics":[],"parse_error":""}}' \
   '{"ok":false}' \
   '{"ok":true,"result":{}}' \
   '{"ok":true,"result":{"diagnostics":[null]}}' \
