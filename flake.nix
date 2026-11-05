@@ -13,6 +13,17 @@
 
   outputs =
     inputs:
+    let
+      moonPlatformFor = pkgs:
+        (pkgs.mkMoonPlatform.override {
+          fetchurl = args: pkgs.fetchurl (args // {
+            url = pkgs.lib.replaceStrings
+              [ "https://moonbitlang-mooncakes.s3.us-west-2.amazonaws.com" ]
+              [ "https://download.mooncakes.io" ]
+              args.url;
+          });
+        }) { version = "latest"; };
+    in
     inputs.flake-parts.lib.mkFlake { inherit inputs; } {
       systems = [
         "x86_64-linux"
@@ -22,11 +33,14 @@
       ];
 
       flake = {
-        overlays.default = _final: prev: {
-          actrun = prev.callPackage ./package.nix {
-            moonRegistryIndex = inputs.moon-registry;
-          };
-        };
+        overlays.default = inputs.nixpkgs.lib.composeExtensions
+          inputs.moonbit-overlay.overlays.default
+          (final: prev: {
+            moonPlatform = moonPlatformFor prev;
+            actrun = final.callPackage ./package.nix {
+              moonRegistryIndex = inputs.moon-registry;
+            };
+          });
       };
 
       perSystem =
@@ -34,13 +48,11 @@
         let
           pkgs = import inputs.nixpkgs {
             inherit system;
-            overlays = [ inputs.moonbit-overlay.overlays.default ];
+            overlays = [ inputs.self.overlays.default ];
             config.allowBroken = true;
           };
 
-          actrun = pkgs.callPackage ./package.nix {
-            moonRegistryIndex = inputs.moon-registry;
-          };
+          actrun = pkgs.actrun;
 
           moonHome = pkgs.moonPlatform.bundleWithRegistry {
             cachedRegistry = pkgs.moonPlatform.buildCachedRegistry {
