@@ -13,6 +13,17 @@
 
   outputs =
     inputs:
+    let
+      moonPlatformFor = pkgs:
+        (pkgs.mkMoonPlatform.override {
+          fetchurl = args: pkgs.fetchurl (args // {
+            url = pkgs.lib.replaceStrings
+              [ "https://moonbitlang-mooncakes.s3.us-west-2.amazonaws.com" ]
+              [ "https://download.mooncakes.io" ]
+              args.url;
+          });
+        }) { version = "latest"; };
+    in
     inputs.flake-parts.lib.mkFlake { inherit inputs; } {
       systems = [
         "x86_64-linux"
@@ -25,6 +36,7 @@
         overlays.default = _final: prev: {
           actrun = prev.callPackage ./package.nix {
             moonRegistryIndex = inputs.moon-registry;
+            moonPlatform = moonPlatformFor prev;
           };
         };
       };
@@ -34,7 +46,12 @@
         let
           pkgs = import inputs.nixpkgs {
             inherit system;
-            overlays = [ inputs.moonbit-overlay.overlays.default ];
+            overlays = [
+              inputs.moonbit-overlay.overlays.default
+              (_final: prev: {
+                moonPlatform = moonPlatformFor prev;
+              })
+            ];
             config.allowBroken = true;
           };
 
