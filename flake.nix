@@ -33,12 +33,14 @@
       ];
 
       flake = {
-        overlays.default = _final: prev: {
-          actrun = prev.callPackage ./package.nix {
-            moonRegistryIndex = inputs.moon-registry;
+        overlays.default = inputs.nixpkgs.lib.composeExtensions
+          inputs.moonbit-overlay.overlays.default
+          (final: prev: {
             moonPlatform = moonPlatformFor prev;
-          };
-        };
+            actrun = final.callPackage ./package.nix {
+              moonRegistryIndex = inputs.moon-registry;
+            };
+          });
       };
 
       perSystem =
@@ -46,18 +48,11 @@
         let
           pkgs = import inputs.nixpkgs {
             inherit system;
-            overlays = [
-              inputs.moonbit-overlay.overlays.default
-              (_final: prev: {
-                moonPlatform = moonPlatformFor prev;
-              })
-            ];
+            overlays = [ inputs.self.overlays.default ];
             config.allowBroken = true;
           };
 
-          actrun = pkgs.callPackage ./package.nix {
-            moonRegistryIndex = inputs.moon-registry;
-          };
+          actrun = pkgs.actrun;
 
           moonHome = pkgs.moonPlatform.bundleWithRegistry {
             cachedRegistry = pkgs.moonPlatform.buildCachedRegistry {
